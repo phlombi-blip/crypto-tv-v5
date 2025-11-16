@@ -1,6 +1,9 @@
 streamlit
-pandas
+requests==2.31.0
+pyOpenSSL
+cryptography
+urllib3
 numpy
-requests
+pandas
 plotly
-streamlit_autorefresh
+streamlit-autorefresh
