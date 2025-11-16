@@ -3,8 +3,14 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import datetime
-from streamlit_autorefresh import st_autorefresh
+
+# Optional: Auto-Refresh (falls Paket installiert ist)
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:
+    st_autorefresh = None
 
 # ---------------------------------------------------------
 # BASIS-KONFIGURATION
@@ -14,24 +20,29 @@ st.set_page_config(
     layout="wide",
 )
 
-BINANCE_BASE_URL = "https://data.binance.com"
-
-SYMBOLS = {
-    "BTC": "BTCUSDT",
-    "ETH": "ETHUSDT",
-    "BNB": "BNBUSDT",
-    "XRP": "XRPUSDT",
-    "SOL": "SOLUSDT",
-    "DOGE": "DOGEUSDT",
+# Bitfinex Public API (ohne API-Key)
+BITFINEX_BASE_URL = "https://api-pub.bitfinex.com/v2"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; CryptoTV-V5/1.0; +https://streamlit.io)"
 }
 
+# Symbole auf Bitfinex
+SYMBOLS = {
+    "BTC": "tBTCUSD",
+    "ETH": "tETHUSD",
+    "XRP": "tXRPUSD",
+    "SOL": "tSOLUSD",
+    "DOGE": "tDOGE:USD",
+}
+
+# Anzeige-Labels → interne Timeframes (Bitfinex: 1m..1D)
 TIMEFRAMES = {
     "1m": "1m",
     "5m": "5m",
     "15m": "15m",
     "1h": "1h",
     "4h": "4h",
-    "1d": "1d",
+    "1d": "1D",  # Bitfinex schreibt 1D
 }
 
 DEFAULT_TIMEFRAME = "1h"
@@ -103,45 +114,91 @@ body, .main {
 """
 
 # ---------------------------------------------------------
-# API FUNKTIONEN
+# API FUNKTIONEN – BITFINEX
 # ---------------------------------------------------------
 def fetch_klines(symbol: str, interval: str, limit: int = 200) -> pd.DataFrame:
-    """Direkter Binance-Kline Abruf."""
-    url = f"{BINANCE_BASE_URL}/api/v3/klines"
-    params = {"symbol": symbol, "interval": interval, "limit": limit}
-    resp = requests.get(url, params=params, timeout=10)
-    resp.raise_for_status()
-    raw = resp.json()
+    timeframe = interval  # z.B. "1m", "1h", "1D"
+    key = f"trade:{timeframe}:{symbol}"
+    url = f"{BITFINEX_BASE_URL}/candles/{key}/hist"
 
-    rows = [
-        {
-            "open_time": pd.to_datetime(c[0], unit="ms"),
-            "open": float(c[1]),
-            "high": float(c[2]),
-            "low": float(c[3]),
-            "close": float(c[4]),
-            "volume": float(c[5]),
-        }
-        for c in raw
-    ]
+    params = {"limit": limit, "sort": -1}
+
+    resp = requests.get(url, params=params, headers=HEADERS, timeout=10)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Candles HTTP {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        raw = resp.json()
+    except ValueError:
+        raise RuntimeError(f"Candles: Ungültige JSON-Antwort: {resp.text[:200]}")
+
+    try:
+        raw = resp.json()
+    except ValueError:
+        raise RuntimeError(f"Candles: Ungültige JSON-Antwort: {resp.text[:200]}")
+
+    if not isinstance(raw, list) or len(raw) == 0:
+        return pd.DataFrame()
+
+    rows = []
+    for c in raw:
+        # [MTS, OPEN, CLOSE, HIGH, LOW, VOLUME]
+        if len(c) < 6:
+            continue
+        rows.append(
+            {
+                "open_time": pd.to_datetime(c[0], unit="ms"),
+                "open": float(c[1]),
+                "close": float(c[2]),
+                "high": float(c[3]),
+                "low": float(c[4]),
+                "volume": float(c[5]),
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame()
 
     df = pd.DataFrame(rows).set_index("open_time")
+    df.sort_index(inplace=True)
     return df
 
 
 @st.cache_data(ttl=60)
 def cached_fetch_klines(symbol: str, interval: str, limit: int = 200):
-    """Gecachter Binance Call – verbessert Performance & Rate Limits."""
+    """Gecachter Candle-Abruf – reduziert Last & Rate-Limits."""
     return fetch_klines(symbol, interval, limit)
 
 
 def fetch_ticker_24h(symbol: str):
-    url = f"{BINANCE_BASE_URL}/api/v3/ticker/24hr"
-    params = {"symbol": symbol}
-    r = requests.get(url, params=params, timeout=10)
-    r.raise_for_status()
-    d = r.json()
-    return float(d["lastPrice"]), float(d["priceChangePercent"])
+    url = f"{BITFINEX_BASE_URL}/ticker/{symbol}"
+    resp = requests.get(url, headers=HEADERS, timeout=10)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Ticker HTTP {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        d = resp.json()
+    except ValueError:
+        raise RuntimeError(f"Ticker: Ungültige JSON-Antwort: {resp.text[:200]}")
+
+    if not isinstance(d, (list, tuple)) or len(d) < 7:
+        raise RuntimeError(f"Ticker: Unerwartetes Format: {d}")
+
+    last_price = float(d[6])
+    change_pct = float(d[5]) * 100.0
+    return last_price, change_pct
+
+    try:
+        d = resp.json()
+    except ValueError:
+        raise RuntimeError(f"Ticker: Ungültige JSON-Antwort: {resp.text[:200]}")
+
+    if not isinstance(d, (list, tuple)) or len(d) < 7:
+        raise RuntimeError(f"Ticker: Unerwartetes Format: {d}")
+
+    last_price = float(d[6])
+    change_pct = float(d[5]) * 100.0  # Faktor → Prozent
+    return last_price, change_pct
 
 # ---------------------------------------------------------
 # INDIKATOREN
@@ -230,10 +287,13 @@ def compute_signals(df: pd.DataFrame) -> pd.DataFrame:
 
     df["signal"] = signals
     return df
+
 # ---------------------------------------------------------
 # BACKTEST
 # ---------------------------------------------------------
 def latest_signal(df: pd.DataFrame) -> str:
+    if "signal" not in df.columns or df.empty:
+        return "NO DATA"
     valid = df[df["signal"].isin(VALID_SIGNALS)]
     return valid["signal"].iloc[-1] if not valid.empty else "NO DATA"
 
@@ -257,11 +317,11 @@ def compute_backtest_trades(df: pd.DataFrame, horizon: int = 5) -> pd.DataFrame:
             continue
 
         entry = closes[i]
-        exit = closes[i + horizon]
+        exit_ = closes[i + horizon]
         if entry == 0:
             continue
 
-        ret = (exit - entry) / entry * 100
+        ret = (exit_ - entry) / entry * 100
         direction = 1 if sig in ["BUY", "STRONG BUY"] else -1
         correct = (np.sign(ret) * direction) > 0
 
@@ -271,7 +331,7 @@ def compute_backtest_trades(df: pd.DataFrame, horizon: int = 5) -> pd.DataFrame:
                 "exit_time": idx[i + horizon],
                 "signal": sig,
                 "entry_price": entry,
-                "exit_price": exit,
+                "exit_price": exit_,
                 "ret_pct": float(ret),
                 "correct": bool(correct),
             }
@@ -322,22 +382,43 @@ def signal_color(signal: str) -> str:
 # PLOTLY CHARTS
 # ---------------------------------------------------------
 def base_layout_kwargs(theme: str):
+    """Basis-Farbschema je nach Theme (ohne x/y-Achsen → keine Doppel-Parameter)."""
     if theme == "Dark":
-        bg, fg, grid = "#020617", "#E5E7EB", "#111827"
+        bg, fg = "#020617", "#E5E7EB"
     else:
-        bg, fg, grid = "#FFFFFF", "#111827", "#E5E7EB"
+        bg, fg = "#FFFFFF", "#111827"
 
     return dict(
         plot_bgcolor=bg,
         paper_bgcolor=bg,
         font=dict(color=fg),
-        xaxis=dict(showgrid=False),
-        yaxis=dict(showgrid=True, gridcolor=grid),
     )
 
 
-def create_price_figure(df, symbol_label, timeframe_label, theme):
-    fig = go.Figure()
+def grid_color_for_theme(theme: str) -> str:
+    if theme == "Dark":
+        return "#111827"
+    else:
+        return "#E5E7EB"
+
+
+def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
+    """
+    Oberer Chart:
+    Candles + EMA20 + EMA50 + Bollinger + Volume (auf zweiter Y-Achse).
+    Kein RSI hier drin.
+    """
+    layout_kwargs = base_layout_kwargs(theme)
+    bg = layout_kwargs["plot_bgcolor"]
+    fg = layout_kwargs["font"]["color"]
+    grid = grid_color_for_theme(theme)
+
+    fig = make_subplots(
+        rows=1,
+        cols=1,
+        specs=[[{"secondary_y": True}]],
+        subplot_titles=(f"{symbol_label}/USD — {timeframe_label}",),
+    )
 
     # Candles
     fig.add_trace(
@@ -348,64 +429,196 @@ def create_price_figure(df, symbol_label, timeframe_label, theme):
             low=df["low"],
             close=df["close"],
             name="Price",
-        )
+            increasing_line_color="#22c55e",  # grün
+            decreasing_line_color="#ef4444",  # rot
+        ),
+        row=1,
+        col=1,
+        secondary_y=False,
     )
 
-    # EMA20/50
+    # EMA20 / EMA50
     if "ema20" in df:
-        fig.add_trace(go.Scatter(x=df.index, y=df["ema20"], name="EMA20", mode="lines"))
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["ema20"],
+                name="EMA20",
+                mode="lines",
+                line=dict(width=1.5, color="#3b82f6"),  # blau
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
     if "ema50" in df:
-        fig.add_trace(go.Scatter(x=df.index, y=df["ema50"], name="EMA50", mode="lines"))
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["ema50"],
+                name="EMA50",
+                mode="lines",
+                line=dict(width=1.5, color="#f97316"),  # orange
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
 
-    # Bollinger
+    # Bollinger Bänder
     if "bb_upper" in df:
-        fig.add_trace(go.Scatter(x=df.index, y=df["bb_upper"], name="BB Upper", mode="lines", line=dict(width=1)))
-        fig.add_trace(go.Scatter(x=df.index, y=df["bb_middle"], name="BB Mid", mode="lines", line=dict(width=1, dash="dot")))
-        fig.add_trace(go.Scatter(x=df.index, y=df["bb_lower"], name="BB Lower", mode="lines", line=dict(width=1)))
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["bb_upper"],
+                name="BB Upper",
+                mode="lines",
+                line=dict(width=1, color="#22c55e"),
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["bb_middle"],
+                name="BB Mid",
+                mode="lines",
+                line=dict(width=1, dash="dot", color="#e5e7eb"),
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["bb_lower"],
+                name="BB Lower",
+                mode="lines",
+                line=dict(width=1, color="#22c55e"),
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
 
+    # Volume auf zweiter Y-Achse
+    fig.add_trace(
+        go.Bar(
+            x=df.index,
+            y=df["volume"],
+            name="Volume",
+            opacity=0.3,
+            marker=dict(color="#f59e0b"),
+        ),
+        row=1,
+        col=1,
+        secondary_y=True,
+    )
+
+    # Layout
     fig.update_layout(
-        title=f"{symbol_label}/USDT — {timeframe_label}",
         height=520,
-        xaxis_rangeslider_visible=False,
         hovermode="x unified",
-        margin=dict(l=10, r=10, t=40, b=10),
-        **base_layout_kwargs(theme),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+            font=dict(size=10),
+        ),
+        plot_bgcolor=bg,
+        paper_bgcolor=bg,
+        font=dict(color=fg),
+        margin=dict(l=10, r=10, t=60, b=40),
+        xaxis_rangeslider_visible=False,  # ⬅️ Mini-Chart/Slider aus
     )
-    return fig
 
-
-def create_volume_figure(df, theme):
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=df.index, y=df["volume"], name="Volume"))
-    fig.update_layout(
-        title="Volume",
-        height=200,
-        hovermode="x unified",
-        margin=dict(l=10, r=10, t=40, b=10),
-        **base_layout_kwargs(theme),
+    # Achsen
+    fig.update_yaxes(
+        title_text="Price",
+        showgrid=True,
+        gridcolor=grid,
+        row=1,
+        col=1,
+        secondary_y=False,
     )
+    fig.update_yaxes(
+        title_text="Volume",
+        showgrid=False,
+        row=1,
+        col=1,
+        secondary_y=True,
+    )
+    fig.update_xaxes(
+        title_text="Time",
+        row=1,
+        col=1,
+        showgrid=False,
+    )
+
     return fig
 
 
 def create_rsi_figure(df, theme):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df["rsi14"], mode="lines", name="RSI14"))
+    """
+    Unterer Chart:
+    Nur RSI (14) in violett mit 30/70 Linien.
+    Keine Candles, kein Volume, keine EMAs, keine Bollinger.
+    """
+    layout_kwargs = base_layout_kwargs(theme)
+    bg = layout_kwargs["plot_bgcolor"]
+    fg = layout_kwargs["font"]["color"]
+    grid = grid_color_for_theme(theme)
 
+    fig = go.Figure()
+
+    # RSI Linie
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df["rsi14"],
+            mode="lines",
+            name="RSI14",
+            line=dict(width=1.5, color="#a855f7"),  # violett
+        )
+    )
+
+    # RSI Level-Linien
     fig.add_hline(y=70, line_dash="dash")
     fig.add_hline(y=30, line_dash="dash")
 
     fig.update_layout(
         title="RSI (14)",
-        height=200,
+        height=220,
         hovermode="x unified",
-        margin=dict(l=10, r=10, t=40, b=10),
-        yaxis=dict(range=[0, 100]),
-        **base_layout_kwargs(theme),
+        plot_bgcolor=bg,
+        paper_bgcolor=bg,
+        font=dict(color=fg),
+        margin=dict(l=10, r=10, t=40, b=40),
+        showlegend=False,
     )
+
+    fig.update_yaxes(
+        title_text="RSI",
+        range=[0, 100],
+        showgrid=True,
+        gridcolor=grid,
+    )
+    fig.update_xaxes(
+        title_text="Time",
+        showgrid=False,
+    )
+
     return fig
 
 
 def create_signal_history_figure(df, allowed, theme):
+    """Signal-Historie als eigener Chart."""
     fig = go.Figure()
 
     levels = {
@@ -415,6 +628,10 @@ def create_signal_history_figure(df, allowed, theme):
         "BUY": 1,
         "STRONG BUY": 2,
     }
+
+    if "signal" not in df.columns:
+        df = df.copy()
+        df["signal"] = "NO DATA"
 
     df2 = df[df["signal"].isin(levels.keys())].copy()
     df2["lvl"] = df2["signal"].map(levels)
@@ -436,18 +653,29 @@ def create_signal_history_figure(df, allowed, theme):
             )
         )
 
+    layout_kwargs = base_layout_kwargs(theme)
+    bg = layout_kwargs["plot_bgcolor"]
+    fg = layout_kwargs["font"]["color"]
+    grid = grid_color_for_theme(theme)
+
     fig.update_layout(
         title="Signal History",
         height=220,
         hovermode="x unified",
-        yaxis=dict(
-            tickvals=[-2, -1, 0, 1, 2],
-            ticktext=list(levels.keys()),
-            range=[-2.5, 2.5],
-        ),
         margin=dict(l=10, r=10, t=40, b=10),
-        **base_layout_kwargs(theme),
+        plot_bgcolor=bg,
+        paper_bgcolor=bg,
+        font=dict(color=fg),
     )
+
+    fig.update_yaxes(
+        tickvals=[-2, -1, 0, 1, 2],
+        ticktext=list(levels.keys()),
+        range=[-2.5, 2.5],
+        showgrid=True,
+        gridcolor=grid,
+    )
+
     return fig
 
 # ---------------------------------------------------------
@@ -459,21 +687,18 @@ def init_state():
     st.session_state.setdefault("theme", "Dark")
     st.session_state.setdefault("backtest_horizon", 5)
     st.session_state.setdefault("backtest_trades", pd.DataFrame())
-    
+
 # ---------------------------------------------------------
 # HAUPT UI / STREAMLIT APP
 # ---------------------------------------------------------
 def main():
     init_state()
 
-    # --------------------------------------
     # Auto-Refresh (TradingView Feel)
-    # --------------------------------------
-    st_autorefresh(interval=60 * 1000, key="refresh")
+    if st_autorefresh is not None:
+        st_autorefresh(interval=60 * 1000, key="refresh")
 
-    # --------------------------------------
     # Sidebar: Theme Toggle
-    # --------------------------------------
     st.sidebar.title("⚙️ Einstellungen")
     theme = st.sidebar.radio(
         "Theme",
@@ -497,7 +722,7 @@ def main():
                     </div>
                 </div>
                 <div style="text-align:right; font-size:0.85rem; opacity:0.8;">
-                    Datenquelle: Binance Spot<br/>
+                    Datenquelle: Bitfinex Spot<br/>
                     Letztes Update: {now}
                 </div>
             </div>
@@ -517,7 +742,6 @@ def main():
             st.markdown('<div class="tv-card">', unsafe_allow_html=True)
             st.markdown('<div class="tv-title">Watchlist</div>', unsafe_allow_html=True)
 
-            # Symbol-Auswahl
             sel = st.radio(
                 "Symbol",
                 list(SYMBOLS.keys()),
@@ -526,24 +750,38 @@ def main():
             )
             st.session_state.selected_symbol = sel
 
-            # Watchlist-Daten
             rows = []
-            selected_tf = st.session_state.selected_timeframe
+            selected_tf_label = st.session_state.selected_timeframe
+            selected_tf_internal = TIMEFRAMES[selected_tf_label]
+
             for label, sym in SYMBOLS.items():
                 try:
-                    price, chg = fetch_ticker_24h(sym)
-
+                    price, chg_pct = fetch_ticker_24h(sym)
                     try:
-                        df_tmp = cached_fetch_klines(sym, TIMEFRAMES[selected_tf], limit=120)
+                        df_tmp = cached_fetch_klines(sym, selected_tf_internal, limit=120)
                         df_tmp = compute_indicators(df_tmp)
                         df_tmp = compute_signals(df_tmp)
                         sig = latest_signal(df_tmp)
-                    except:
+                    except Exception:
                         sig = "NO DATA"
 
-                    rows.append({"Symbol": label, "Price": price, "Change %": chg, "Signal": sig})
-                except:
-                    rows.append({"Symbol": label, "Price": np.nan, "Change %": np.nan, "Signal": "NO DATA"})
+                    rows.append(
+                        {
+                            "Symbol": label,
+                            "Price": price,
+                            "Change %": chg_pct,
+                            "Signal": sig,
+                        }
+                    )
+                except Exception:
+                    rows.append(
+                        {
+                            "Symbol": label,
+                            "Price": np.nan,
+                            "Change %": np.nan,
+                            "Signal": "NO DATA",
+                        }
+                    )
 
             df_watch = pd.DataFrame(rows).set_index("Symbol")
 
@@ -565,8 +803,8 @@ def main():
             st.markdown('<div class="tv-card">', unsafe_allow_html=True)
             st.markdown('<div class="tv-title">System</div>', unsafe_allow_html=True)
             st.write("🖥️ Modus: Desktop TradingView-Style V5")
-            st.write("📡 Feed: Binance Spot (REST API)")
-            st.write("📏 Panels: Price, Volume, RSI, Signals, Backtest, Trades")
+            st.write("📡 Feed: Bitfinex Spot (REST API, Public)")
+            st.write("📏 Panels: Price+Volume, RSI, Signals, Backtest, Trades")
             st.write("🎨 Theme: Dark / Light (Sidebar)")
             st.markdown("</div>", unsafe_allow_html=True)
 
@@ -580,7 +818,7 @@ def main():
             symbol_label = st.session_state.selected_symbol
             symbol = SYMBOLS[symbol_label]
             tf_label = st.session_state.selected_timeframe
-            interval = TIMEFRAMES[tf_label]
+            interval_internal = TIMEFRAMES[tf_label]
 
             st.markdown('<div class="tv-title">Chart</div>', unsafe_allow_html=True)
 
@@ -594,7 +832,7 @@ def main():
 
             # Daten abrufen
             try:
-                df_raw = cached_fetch_klines(symbol, interval, limit=240)
+                df_raw = cached_fetch_klines(symbol, interval_internal, limit=240)
                 df = compute_indicators(df_raw.copy())
                 df = compute_signals(df)
 
@@ -608,6 +846,7 @@ def main():
                 last_time = df.index[-1]
 
                 feed_ok = True
+                error_msg = ""
             except Exception as e:
                 df = pd.DataFrame()
                 sig = "NO DATA"
@@ -622,7 +861,7 @@ def main():
             k1, k2, k3, k4 = st.columns(4)
             with k1:
                 st.caption("Preis")
-                st.markdown(f"**{last_price:,.2f} USDT**" if feed_ok else "–")
+                st.markdown(f"**{last_price:,.2f} USD**" if feed_ok else "–")
 
             with k2:
                 st.caption("Change letzte Candle")
@@ -646,15 +885,17 @@ def main():
                     st.caption(f"Letzte Candle: {last_time}")
                 else:
                     st.markdown("🔴 **Fehler**")
-                    st.caption(error_msg[:60])
+                    st.caption(error_msg[:80])
 
             st.markdown("---")
 
             # Charts rendern
             if not df.empty:
-                st.plotly_chart(create_price_figure(df, symbol_label, tf_label, theme), use_container_width=True)
-                st.plotly_chart(create_volume_figure(df, theme), use_container_width=True)
-                st.plotly_chart(create_rsi_figure(df, theme), use_container_width=True)
+                fig_top = create_price_volume_figure(df, symbol_label, tf_label, theme)
+                st.plotly_chart(fig_top, use_container_width=True)
+
+                fig_rsi = create_rsi_figure(df, theme)
+                st.plotly_chart(fig_rsi, use_container_width=True)
             else:
                 st.warning("Keine Daten geladen – API/Internet prüfen.")
 
@@ -680,7 +921,10 @@ def main():
                         VALID_SIGNALS,
                         default=VALID_SIGNALS,
                     )
-                    st.plotly_chart(create_signal_history_figure(df, allow, theme), use_container_width=True)
+                    st.plotly_chart(
+                        create_signal_history_figure(df, allow, theme),
+                        use_container_width=True,
+                    )
 
                 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -695,7 +939,8 @@ def main():
                 else:
                     horizon = st.slider(
                         "Halte-Dauer (Kerzen)",
-                        1, 20,
+                        1,
+                        20,
                         value=st.session_state.backtest_horizon,
                     )
                     st.session_state.backtest_horizon = horizon
@@ -757,7 +1002,7 @@ def main():
             if st.button("🔄 Refresh"):
                 st.experimental_rerun()
         with r2:
-            st.caption("Charts aktualisieren automatisch alle 60 Sekunden.")
+            st.caption("Charts aktualisieren automatisch alle 60 Sekunden (oder manuell per Button).")
 
 
 # ---------------------------------------------------------
