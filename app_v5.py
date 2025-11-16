@@ -14,7 +14,7 @@ st.set_page_config(
     layout="wide",
 )
 
-BINANCE_BASE_URL = "https://api.binance.com"
+BINANCE_BASE_URL = "https://data.binance.com"
 
 SYMBOLS = {
     "BTC": "BTCUSDT",
