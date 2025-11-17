@@ -1186,7 +1186,7 @@ def main():
             st.write("🎨 Theme: Dark / Light (Sidebar)")
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # ---------------------------------------------------------
+        # ---------------------------------------------------------
     # MAIN CHART AREA (RIGHT PANEL)
     # ---------------------------------------------------------
     with col_right:
@@ -1208,25 +1208,77 @@ def main():
                         st.session_state.selected_timeframe = tf
                         st.rerun()
 
-            # Daten abrufen
+            # -------------------------------------------------
+            # Daten abrufen + Date-Picker (Von / Bis)
+            # -------------------------------------------------
             try:
                 limit_main = candles_for_history(interval_internal, years=YEARS_HISTORY)
                 df_raw = cached_fetch_klines(symbol, interval_internal, limit=limit_main)
-                df = compute_indicators(df_raw.copy())
-                df = compute_signals(df)
 
-                sig = latest_signal(df)
-                last = df.iloc[-1]
-                prev = df.iloc[-2]
+                # Defaults
+                date_from = None
+                date_to = None
 
-                last_price = last["close"]
-                change_abs = last_price - prev["close"]
-                change_pct = (change_abs / prev["close"]) * 100 if prev["close"] != 0 else 0
-                last_time = df.index[-1]
-                signal_reason = last.get("signal_reason", "")
+                if not df_raw.empty:
+                    # Min/Max Datum aus den geladenen Candles
+                    min_date = df_raw.index.min().date()
+                    max_date = df_raw.index.max().date()
 
-                feed_ok = True
-                error_msg = ""
+                    c_from, c_to = st.columns(2)
+                    with c_from:
+                        date_from = st.date_input(
+                            "📅 Von (Datum)",
+                            value=st.session_state.get("date_from", min_date),
+                            min_value=min_date,
+                            max_value=max_date,
+                            key="date_from",
+                        )
+                    with c_to:
+                        date_to = st.date_input(
+                            "📅 Bis (Datum)",
+                            value=st.session_state.get("date_to", max_date),
+                            min_value=min_date,
+                            max_value=max_date,
+                            key="date_to",
+                        )
+
+                    # Falls Benutzer versehentlich Von > Bis wählt → tauschen
+                    if date_from > date_to:
+                        date_from, date_to = date_to, date_from
+
+                    # Filter auf DataFrame anwenden
+                    mask = (df_raw.index.date >= date_from) & (df_raw.index.date <= date_to)
+                    df_raw = df_raw.loc[mask]
+
+                # Indikatoren + Signale nur auf gefilterten Daten
+                if not df_raw.empty:
+                    df = compute_indicators(df_raw.copy())
+                    df = compute_signals(df)
+                else:
+                    df = pd.DataFrame()
+
+                if df.empty:
+                    sig = "NO DATA"
+                    last_price = 0
+                    change_abs = 0
+                    change_pct = 0
+                    last_time = None
+                    signal_reason = ""
+                    feed_ok = False
+                    error_msg = "Keine Daten im gewählten Zeitraum."
+                else:
+                    sig = latest_signal(df)
+                    last = df.iloc[-1]
+                    prev = df.iloc[-2]
+
+                    last_price = last["close"]
+                    change_abs = last_price - prev["close"]
+                    change_pct = (change_abs / prev["close"]) * 100 if prev["close"] != 0 else 0
+                    last_time = df.index[-1]
+                    signal_reason = last.get("signal_reason", "")
+                    feed_ok = True
+                    error_msg = ""
+
             except Exception as e:
                 df = pd.DataFrame()
                 sig = "NO DATA"
@@ -1265,7 +1317,10 @@ def main():
                 st.caption("Status")
                 if feed_ok:
                     st.markdown("🟢 **Live**")
-                    st.caption(f"Letzte Candle: {last_time}")
+                    if last_time is not None:
+                        st.caption(f"Letzte Candle: {last_time}")
+                    if date_from and date_to:
+                        st.caption(f"Zeitraum: {date_from} bis {date_to}")
                 else:
                     st.markdown("🔴 **Fehler**")
                     st.caption(error_msg[:80])
@@ -1277,9 +1332,10 @@ def main():
                 fig_price_rsi = create_price_rsi_figure(df, symbol_label, tf_label, theme)
                 st.plotly_chart(fig_price_rsi, use_container_width=True)
             else:
-                st.warning("Keine Daten geladen – API/Internet prüfen.")
+                st.warning("Keine Daten im gewählten Zeitraum – Zeitraum anpassen oder API/Internet prüfen.")
 
             st.markdown("</div>", unsafe_allow_html=True)
+
 
         # ---------------------------------------------------------
         # SIGNAL-HISTORY + BACKTEST PANELS
@@ -1403,6 +1459,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
