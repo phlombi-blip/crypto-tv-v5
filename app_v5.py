@@ -568,13 +568,15 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
     EMA50_COLOR = "#2196F3"  # Blau – EMA50
 
     if theme == "Dark":
-        BB_LINE_COLOR = "#2962FF"
-        BB_FILL_COLOR = "rgba(41,98,255,0.12)"   # sehr dezentes Blau
-        BB_MID_COLOR = "#9CA3AF"
+        # Dezentes Grau/Weiß für Bollinger in dunklem Chart
+        BB_LINE_COLOR = "#d1d5db"                          # hellgraue Linie
+        BB_FILL_COLOR = "rgba(209,213,219,0.10)"           # super sanftes Grau
+        BB_MID_COLOR = "#9ca3af"                           # Mittelband: graublau
     else:
-        BB_LINE_COLOR = "#2962FF"
-        BB_FILL_COLOR = "rgba(41,98,255,0.06)"
-        BB_MID_COLOR = "#6B7280"
+        # Dezentes Hellgrau/Graublau für helles Chart
+        BB_LINE_COLOR = "#94a3b8"                          # graublau
+        BB_FILL_COLOR = "rgba(148,163,184,0.07)"           # sehr leichtes Grau
+        BB_MID_COLOR = "#6b7280"                           # dunkleres Grau
 
     layout_kwargs = base_layout_kwargs(theme)
     bg = layout_kwargs["plot_bgcolor"]
@@ -612,9 +614,63 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
 
     # --- OBERES PANEL: BOLLINGER + PRICE + VOLUME ---
 
-    # 1) Bollinger-Bänder zuerst → Shading liegt HINTER den Candles
+    # 1) Bollinger-Band-Fläche als eigenes Polygon (liegt sicher HINTER allem)
+    if {"bb_up", "bb_lo"}.issubset(df.columns):
+        band_x = list(df.index) + list(df.index[::-1])
+        band_y = list(df["bb_up"]) + list(df["bb_lo"][::-1])
+
+        fig.add_trace(
+            go.Scatter(
+                x=band_x,
+                y=band_y,
+                name="BB Area",
+                mode="lines",
+                line=dict(width=0),
+                fill="toself",
+                fillcolor=BB_FILL_COLOR,
+                hoverinfo="skip",
+                showlegend=False,
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
+
+    # 2) Candles (liegen über dem Band)
+    fig.add_trace(
+        go.Candlestick(
+            x=df.index,
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            name="Price",
+            increasing_fillcolor=BULL_COLOR,
+            increasing_line_color=BULL_COLOR,
+            decreasing_fillcolor=BEAR_COLOR,
+            decreasing_line_color=BEAR_COLOR,
+        ),
+        row=1,
+        col=1,
+        secondary_y=False,
+    )
+
+    # 3) Bollinger-Linien (Upper/Lower/Mid) über Candles & Band
     if "bb_up" in df:
-        # Lower Band (ohne Fill, nur Linie)
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["bb_up"],
+                name="BB Upper",
+                mode="lines",
+                line=dict(width=1, color=BB_LINE_COLOR),
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
+
+    if "bb_lo" in df:
         fig.add_trace(
             go.Scatter(
                 x=df.index,
@@ -628,23 +684,7 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
             secondary_y=False,
         )
 
-        # Upper Band mit Fill bis zum Lower Band (tonexty)
-        fig.add_trace(
-            go.Scatter(
-                x=df.index,
-                y=df["bb_up"],
-                name="BB Upper",
-                mode="lines",
-                line=dict(width=1, color=BB_LINE_COLOR),
-                fill="tonexty",
-                fillcolor=BB_FILL_COLOR,
-            ),
-            row=1,
-            col=1,
-            secondary_y=False,
-        )
-
-        # Mittelband dezent gestrichelt
+    if "bb_mid" in df:
         fig.add_trace(
             go.Scatter(
                 x=df.index,
@@ -658,28 +698,7 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
             secondary_y=False,
         )
 
-    # 2) Candles (liegen optisch über dem Bollinger-Shading)
-    fig.add_trace(
-        go.Candlestick(
-            x=df.index,
-            open=df["open"],
-            high=df["high"],
-            low=df["low"],
-            close=df["close"],
-            name="Price",
-            # Bullish: vollgrün, Border = Fill (quasi kein Rand)
-            increasing_fillcolor=BULL_COLOR,
-            increasing_line_color=BULL_COLOR,
-            # Bearish: vollrot, Border = Fill
-            decreasing_fillcolor=BEAR_COLOR,
-            decreasing_line_color=BEAR_COLOR,
-        ),
-        row=1,
-        col=1,
-        secondary_y=False,
-    )
-
-    # 3) EMA20 / EMA50 (TradingView-Standardfarben)
+    # 4) EMA20 / EMA50 (TradingView-Standardfarben)
     if "ema20" in df:
         fig.add_trace(
             go.Scatter(
@@ -687,12 +706,13 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
                 y=df["ema20"],
                 name="EMA20",
                 mode="lines",
-                line=dict(width=1.5, color=EMA20_COLOR),  # orange
+                line=dict(width=1.5, color=EMA20_COLOR),
             ),
             row=1,
             col=1,
             secondary_y=False,
         )
+
     if "ema50" in df:
         fig.add_trace(
             go.Scatter(
@@ -700,14 +720,14 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
                 y=df["ema50"],
                 name="EMA50",
                 mode="lines",
-                line=dict(width=1.5, color=EMA50_COLOR),  # blau
+                line=dict(width=1.5, color=EMA50_COLOR),
             ),
             row=1,
             col=1,
             secondary_y=False,
         )
 
-    # 4) Volume auf zweiter Y-Achse (ohne Label-Text)
+    # 5) Volume auf zweiter Y-Achse (ohne Label-Text)
     fig.add_trace(
         go.Bar(
             x=df.index,
@@ -795,6 +815,79 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
     fig.update_xaxes(showgrid=False, row=1, col=1)
 
     return fig
+
+
+def create_signal_history_figure(df, allowed, theme):
+    """Signal-Historie als eigener Chart – mit Begründung im Hover."""
+    fig = go.Figure()
+
+    levels = {
+        "STRONG SELL": -2,
+        "SELL": -1,
+        "HOLD": 0,
+        "BUY": 1,
+        "STRONG BUY": 2,
+    }
+
+    if "signal" not in df.columns:
+        df = df.copy()
+        df["signal"] = "NO DATA"
+
+    if "signal_reason" not in df.columns:
+        df = df.copy()
+        df["signal_reason"] = ""
+
+    df2 = df[df["signal"].isin(levels.keys())].copy()
+    df2["lvl"] = df2["signal"].map(levels)
+    df2 = df2[df2["signal"].isin(allowed)]
+
+    for sig, lvl in levels.items():
+        if sig not in allowed:
+            continue
+        sub = df2[df2["signal"] == sig]
+        if sub.empty:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=sub.index,
+                y=[lvl] * len(sub),
+                mode="markers",
+                name=sig,
+                marker=dict(size=8),
+                text=sub["signal_reason"],
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    f"Signal: {sig}<br>"
+                    "%{text}<extra></extra>"
+                ),
+            )
+        )
+
+    layout_kwargs = base_layout_kwargs(theme)
+    bg = layout_kwargs["plot_bgcolor"]
+    fg = layout_kwargs["font"]["color"]
+    grid = grid_color_for_theme(theme)
+
+    fig.update_layout(
+        title="Signal History",
+        height=220,
+        hovermode="x unified",
+        margin=dict(l=10, r=10, t=40, b=10),
+        plot_bgcolor=bg,
+        paper_bgcolor=bg,
+        font=dict(color=fg),
+    )
+
+    fig.update_yaxes(
+        tickvals=[-2, -1, 0, 1, 2],
+        ticktext=list(levels.keys()),
+        range=[-2.5, 2.5],
+        showgrid=True,
+        gridcolor=grid,
+    )
+
+    return fig
+
 
 
 def create_signal_history_figure(df, allowed, theme):
@@ -1294,6 +1387,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
