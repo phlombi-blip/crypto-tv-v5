@@ -844,6 +844,7 @@ def create_signal_history_figure(df, allowed, theme):
     """Signal-Historie als eigener Chart – mit Begründung im Hover."""
     fig = go.Figure()
 
+    # y-Level ohne HOLD
     levels = {
         "STRONG SELL": -2,
         "SELL": -1,
@@ -877,7 +878,7 @@ def create_signal_history_figure(df, allowed, theme):
                 name=sig,
                 marker=dict(
                     size=9,
-                    color=signal_colors[sig],  # <-- Farbe je Signal
+                    color=signal_colors.get(sig, "#ffffff"),  # Farben aus signal_colors
                     line=dict(width=0),
                 ),
                 text=sub["signal_reason"],
@@ -905,153 +906,7 @@ def create_signal_history_figure(df, allowed, theme):
     )
 
     fig.update_yaxes(
-        tickvals=[-2, -1, 0, 1, 2],
-        ticktext=list(levels.keys()),
-        range=[-2.5, 2.5],
-        showgrid=True,
-        gridcolor=grid,
-    )
-
-    return fig
-
-
-
-def create_signal_history_figure(df, allowed, theme):
-    """Signal-Historie als eigener Chart – mit Begründung im Hover."""
-    fig = go.Figure()
-
-    levels = {
-        "STRONG SELL": -2,
-        "SELL": -1,
-        "HOLD": 0,
-        "BUY": 1,
-        "STRONG BUY": 2,
-    }
-
-    if "signal" not in df.columns:
-        df = df.copy()
-        df["signal"] = "NO DATA"
-
-    if "signal_reason" not in df.columns:
-        df = df.copy()
-        df["signal_reason"] = ""
-
-    df2 = df[df["signal"].isin(levels.keys())].copy()
-    df2["lvl"] = df2["signal"].map(levels)
-    df2 = df2[df2["signal"].isin(allowed)]
-
-    for sig, lvl in levels.items():
-        if sig not in allowed:
-            continue
-        sub = df2[df2["signal"] == sig]
-        if sub.empty:
-            continue
-        fig.add_trace(
-            go.Scatter(
-                x=sub.index,
-                y=[lvl] * len(sub),
-                mode="markers",
-                name=sig,
-                marker=dict(size=8),
-                text=sub["signal_reason"],
-                hovertemplate=(
-                    "<b>%{x}</b><br>"
-                    f"Signal: {sig}<br>"
-                    "%{text}<extra></extra>"
-                ),
-            )
-        )
-
-    layout_kwargs = base_layout_kwargs(theme)
-    bg = layout_kwargs["plot_bgcolor"]
-    fg = layout_kwargs["font"]["color"]
-    grid = grid_color_for_theme(theme)
-
-    fig.update_layout(
-        title="Signal History",
-        height=220,
-        hovermode="x unified",
-        margin=dict(l=10, r=10, t=40, b=10),
-        plot_bgcolor=bg,
-        paper_bgcolor=bg,
-        font=dict(color=fg),
-    )
-
-    fig.update_yaxes(
-        tickvals=[-2, -1, 0, 1, 2],
-        ticktext=list(levels.keys()),
-        range=[-2.5, 2.5],
-        showgrid=True,
-        gridcolor=grid,
-    )
-
-    return fig
-
-
-
-def create_signal_history_figure(df, allowed, theme):
-    """Signal-Historie als eigener Chart – mit Begründung im Hover."""
-    fig = go.Figure()
-
-    levels = {
-        "STRONG SELL": -2,
-        "SELL": -1,
-        "HOLD": 0,
-        "BUY": 1,
-        "STRONG BUY": 2,
-    }
-
-    if "signal" not in df.columns:
-        df = df.copy()
-        df["signal"] = "NO DATA"
-
-    if "signal_reason" not in df.columns:
-        df = df.copy()
-        df["signal_reason"] = ""
-
-    df2 = df[df["signal"].isin(levels.keys())].copy()
-    df2["lvl"] = df2["signal"].map(levels)
-    df2 = df2[df2["signal"].isin(allowed)]
-
-    for sig, lvl in levels.items():
-        if sig not in allowed:
-            continue
-        sub = df2[df2["signal"] == sig]
-        if sub.empty:
-            continue
-        fig.add_trace(
-            go.Scatter(
-                x=sub.index,
-                y=[lvl] * len(sub),
-                mode="markers",
-                name=sig,
-                marker=dict(size=8),
-                text=sub["signal_reason"],
-                hovertemplate=(
-                    "<b>%{x}</b><br>"
-                    f"Signal: {sig}<br>"
-                    "%{text}<extra></extra>"
-                ),
-            )
-        )
-
-    layout_kwargs = base_layout_kwargs(theme)
-    bg = layout_kwargs["plot_bgcolor"]
-    fg = layout_kwargs["font"]["color"]
-    grid = grid_color_for_theme(theme)
-
-    fig.update_layout(
-        title="Signal History",
-        height=220,
-        hovermode="x unified",
-        margin=dict(l=10, r=10, t=40, b=10),
-        plot_bgcolor=bg,
-        paper_bgcolor=bg,
-        font=dict(color=fg),
-    )
-
-    fig.update_yaxes(
-        tickvals=[-2, -1, 0, 1, 2],
+        tickvals=[-2, -1, 1, 2],
         ticktext=list(levels.keys()),
         range=[-2.5, 2.5],
         showgrid=True,
@@ -1483,6 +1338,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
