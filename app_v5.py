@@ -564,8 +564,9 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
     BULL_COLOR = "#22c55e"   # grüne Candles
     BEAR_COLOR = "#ef4444"   # rote Candles
 
-    EMA20_COLOR = "#FF9800"  # Orange – EMA20
-    EMA50_COLOR = "#2196F3"  # Blau – EMA50
+    EMA20_COLOR = "#2962FF"  # Orange – EMA20
+    EMA50_COLOR = "#FF6D00"  # Blau – EMA50
+    EMA200_COLOR = "#C51162"  # Blau – EMA200
 
     if theme == "Dark":
         # Dezentes Grau/Weiß für Bollinger in dunklem Chart
@@ -735,7 +736,7 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
                 y=df["ma200"],
                 name="MA200",
                 mode="lines",
-                line=dict(width=1.8, color="#e5e7eb"),  # hellgrau/weiß wie in TradingView
+                line=dict(width=1.5, color=EMA200_COLOR),  # hellgrau/weiß wie in TradingView
             ),
             row=1,
             col=1,
@@ -1402,6 +1403,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
