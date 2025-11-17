@@ -271,11 +271,6 @@ def signal_for_pair(last, prev):
         return "HOLD"
 
     # -------------------------------------------------------
-    # 0) Trendbruch-Exit (Downtrend beginnt)
-    # -------------------------------------------------------
-    
-
-    # -------------------------------------------------------
     # Blow-Off-Top Detector (Bitcoin-spezifisch)
     # -------------------------------------------------------
     blowoff = (
@@ -472,6 +467,33 @@ def signal_color(signal: str) -> str:
 
 
 # ---------------------------------------------------------
+# HILFSFUNKTION: WIE VIELE CANDLES FÜR X JAHRE?
+# ---------------------------------------------------------
+def candles_for_history(interval: str, years: float = 1.0) -> int:
+    """
+    Gibt zurück, wie viele Candles ungefähr für 'years' Jahre Historie
+    nötig sind – abhängig vom Timeframe.
+    """
+    days = 365 * years
+
+    candles_per_day = {
+        "1m": 24 * 60,          # 1440 Kerzen pro Tag
+        "5m": (24 * 60) // 5,   # 288
+        "15m": (24 * 60) // 15, # 96
+        "1h": 24,               # 24
+        "4h": 6,                # 6
+        "1D": 1,                # 1
+    }
+
+    cpd = candles_per_day.get(interval)
+    if cpd is None:
+        # Fallback: einfach 365 Kerzen pro Jahr
+        return int(days)
+
+    return int(days * cpd)
+
+
+# ---------------------------------------------------------
 # PLOTLY CHARTS
 # ---------------------------------------------------------
 def base_layout_kwargs(theme: str):
@@ -543,6 +565,21 @@ def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
                 name="EMA50",
                 mode="lines",
                 line=dict(width=1.5, color="#f97316"),  # orange
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
+
+    # MA200 – langfristiger Trend
+    if "ma200" in df:
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["ma200"],
+                name="MA200",
+                mode="lines",
+                line=dict(width=1.5, color="#eab308", dash="dash"),  # gelb, gestrichelt
             ),
             row=1,
             col=1,
@@ -846,6 +883,7 @@ def main():
                 try:
                     price, chg_pct = fetch_ticker_24h(sym)
                     try:
+                        # Für Watchlist reicht kürzere Historie
                         df_tmp = cached_fetch_klines(sym, selected_tf_internal, limit=240)
                         df_tmp = compute_indicators(df_tmp)
                         df_tmp = compute_signals(df_tmp)
@@ -874,10 +912,10 @@ def main():
             df_watch = pd.DataFrame(rows).set_index("Symbol")
 
             def highlight(row):
-                theme = st.session_state.theme
+                theme_local = st.session_state.theme
                 if row.name == st.session_state.selected_symbol:
-                    bg = "#111827" if theme == "Dark" else "#D1D5DB"
-                    fg = "white" if theme == "Dark" else "black"
+                    bg = "#111827" if theme_local == "Dark" else "#D1D5DB"
+                    fg = "white" if theme_local == "Dark" else "black"
                     return [f"background-color:{bg}; color:{fg}"] * len(row)
                 return [""] * len(row)
 
@@ -921,12 +959,13 @@ def main():
                         st.session_state.selected_timeframe = tf
                         st.rerun()
 
-           # Daten abrufen
+            # Daten abrufen (für Chart & Backtest mit ~1 Jahr Historie)
             try:
-                df_raw = cached_fetch_klines(symbol, interval_internal, limit=240)
+                limit = candles_for_history(interval_internal, years=1.0)
+                df_raw = cached_fetch_klines(symbol, interval_internal, limit=limit)
                 df = compute_indicators(df_raw.copy())
                 df = compute_signals(df)
-                
+
                 sig = latest_signal(df)
                 last = df.iloc[-1]
                 prev = df.iloc[-2]
@@ -941,9 +980,9 @@ def main():
             except Exception as e:
                 df = pd.DataFrame()
                 sig = "NO DATA"
-                last_price = 0
-                change_abs = 0
-                change_pct = 0
+                last_price = 0.0
+                change_abs = 0.0
+                change_pct = 0.0
                 last_time = None
                 feed_ok = False
                 error_msg = str(e)
