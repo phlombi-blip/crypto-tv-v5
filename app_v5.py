@@ -646,41 +646,55 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
             secondary_y=False,
         )
 
-    # Bollinger Bänder
+    # Bollinger Bänder (TradingView-like: blau + leichter Fill)
     if "bb_up" in df:
+        if theme == "Dark":
+            bb_line = "#60a5fa"   # blau
+            bb_fill = "rgba(96,165,250,0.12)"
+            bb_mid = "#9ca3af"
+        else:
+            bb_line = "#3b82f6"
+            bb_fill = "rgba(59,130,246,0.08)"
+            bb_mid = "#6b7280"
+
+        # Upper Band
         fig.add_trace(
             go.Scatter(
                 x=df.index,
                 y=df["bb_up"],
                 name="BB Upper",
                 mode="lines",
-                line=dict(width=1, color="#22c55e"),
+                line=dict(width=1, color=bb_line),
             ),
             row=1,
             col=1,
             secondary_y=False,
         )
 
-        fig.add_trace(
-            go.Scatter(
-                x=df.index,
-                y=df["bb_mid"],
-                name="BB Mid",
-                mode="lines",
-                line=dict(width=1, dash="dot", color="#e5e7eb"),
-            ),
-            row=1,
-            col=1,
-            secondary_y=False,
-        )
-
+        # Lower Band + Fill bis Upper
         fig.add_trace(
             go.Scatter(
                 x=df.index,
                 y=df["bb_lo"],
                 name="BB Lower",
                 mode="lines",
-                line=dict(width=1, color="#22c55e"),
+                line=dict(width=1, color=bb_line),
+                fill="tonexty",
+                fillcolor=bb_fill,
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
+
+        # Mittelband dezent gestrichelt
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["bb_mid"],
+                name="BB Basis",
+                mode="lines",
+                line=dict(width=1, dash="dot", color=bb_mid),
             ),
             row=1,
             col=1,
@@ -1219,5 +1233,6 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
