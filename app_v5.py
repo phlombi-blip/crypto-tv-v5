@@ -1353,8 +1353,8 @@ def main():
                 else:
                     allow = st.multiselect(
                         "Signale anzeigen",
-                        VALID_SIGNALS,
-                        default=VALID_SIGNALS,
+                        ["STRONG BUY", "BUY", "SELL", "STRONG SELL"],
+                        default=["STRONG BUY", "BUY", "SELL", "STRONG SELL"],
                     )
                     st.plotly_chart(
                         create_signal_history_figure(df, allow, theme),
