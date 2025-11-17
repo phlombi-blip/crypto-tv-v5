@@ -36,6 +36,13 @@ SYMBOLS = {
     "DOGE": "tDOGE:USD",
 }
 
+signal_colors = {
+    "STRONG BUY": "#00e676",  # kräftiges Grün
+    "BUY": "#81c784",         # helleres Grün
+    "SELL": "#e57373",        # hellrot
+    "STRONG SELL": "#d32f2f", # kräftiges Rot
+}
+
 # Anzeige-Labels → interne Timeframes (Bitfinex: 1m..1D)
 TIMEFRAMES = {
     "1m": "1m",
@@ -868,7 +875,11 @@ def create_signal_history_figure(df, allowed, theme):
                 y=[lvl] * len(sub),
                 mode="markers",
                 name=sig,
-                marker=dict(size=8),
+                marker=dict(
+                    size=9,
+                    color=signal_colors[sig],  # <-- Farbe je Signal
+                    line=dict(width=0),
+                ),
                 text=sub["signal_reason"],
                 hovertemplate=(
                     "<b>%{x}</b><br>"
@@ -1472,6 +1483,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
