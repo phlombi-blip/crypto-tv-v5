@@ -623,31 +623,36 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
     # --- OBERES PANEL: BOLLINGER + PRICE + VOLUME ---
 
     # 1) Bollinger-Band-Fläche nur mit validen Werten zeichnen
-    if {"bb_up", "bb_lo"}.issubset(df.columns) and df["bb_up"].notna().any():
-        # komplette gültige Range bestimmen
-        bb_valid = df.dropna(subset=["bb_up", "bb_lo"])
-        if not bb_valid.empty:
-            xs = bb_valid.index
-            up = bb_valid["bb_up"]
-            lo = bb_valid["bb_lo"]
-    
-            # Path bauen: Move → Upper Linie → Lower reversed → Close
-            path = "M " + " L ".join(
-                f"{x},{y}" for x, y in zip(xs, up)
-            )
-            path += " L " + " L ".join(
-                f"{x},{y}" for x, y in zip(xs[::-1], lo[::-1])
-            ) + " Z"
-    
-            fig.add_shape(
-                type="path",
-                path=path,
-                fillcolor=BB_FILL_COLOR,
-                line=dict(width=0),
-                layer="below",   # WICHTIG: hinter Candles
-                row=1,
-                col=1,
-            )
+    has_bb = {"bb_up", "bb_lo", "bb_mid"}.issubset(df.columns)
+
+    bb_up_f = bb_lo_f = bb_mid_f = None
+    if has_bb and df["bb_up"].notna().any():
+        bb_up_f = df["bb_up"].copy()
+        bb_lo_f = df["bb_lo"].copy()
+        bb_mid_f = df["bb_mid"].copy()
+
+        # erst nach unten, dann nach oben füllen → keine Lücken im aktuellen Fenster
+        bb_up_f  = bb_up_f.bfill().ffill()
+        bb_lo_f  = bb_lo_f.bfill().ffill()
+        bb_mid_f = bb_mid_f.bfill().ffill()
+
+        # 1a) Bollinger-Band als Shape über den kompletten sichtbaren Bereich
+        xs = df.index
+        up = bb_up_f
+        lo = bb_lo_f
+
+        path = "M " + " L ".join(f"{x},{y}" for x, y in zip(xs, up))
+        path += " L " + " L ".join(f"{x},{y}" for x, y in zip(xs[::-1], lo[::-1])) + " Z"
+
+        fig.add_shape(
+            type="path",
+            path=path,
+            fillcolor=BB_FILL_COLOR,
+            line=dict(width=0),
+            layer="below",  # Fläche hinter den Candles
+            row=1,
+            col=1,
+        )
 
     # 2) Candles (liegen über dem Band)
     fig.add_trace(
@@ -669,11 +674,11 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
     )
 
     # 3) Bollinger-Linien (Upper/Lower/Mid) über Candles & Band
-    if "bb_up" in df:
+    if bb_up_f is not None:
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df["bb_up"],
+                y=bb_up_f,
                 name="BB Upper",
                 mode="lines",
                 line=dict(width=1, color=BB_LINE_COLOR),
@@ -683,11 +688,11 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
             secondary_y=False,
         )
 
-    if "bb_lo" in df:
+    if bb_lo_f is not None:
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df["bb_lo"],
+                y=bb_lo_f,
                 name="BB Lower",
                 mode="lines",
                 line=dict(width=1, color=BB_LINE_COLOR),
@@ -697,11 +702,11 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
             secondary_y=False,
         )
 
-    if "bb_mid" in df:
+    if bb_mid_f is not None:
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df["bb_mid"],
+                y=bb_mid_f,
                 name="BB Basis",
                 mode="lines",
                 line=dict(width=1, dash="dot", color=BB_MID_COLOR),
@@ -1348,6 +1353,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
