@@ -132,11 +132,6 @@ def fetch_klines(symbol: str, interval: str, limit: int = 200) -> pd.DataFrame:
     except ValueError:
         raise RuntimeError(f"Candles: Ungültige JSON-Antwort: {resp.text[:200]}")
 
-    try:
-        raw = resp.json()
-    except ValueError:
-        raise RuntimeError(f"Candles: Ungültige JSON-Antwort: {resp.text[:200]}")
-
     if not isinstance(raw, list) or len(raw) == 0:
         return pd.DataFrame()
 
@@ -188,17 +183,6 @@ def fetch_ticker_24h(symbol: str):
     change_pct = float(d[5]) * 100.0
     return last_price, change_pct
 
-    try:
-        d = resp.json()
-    except ValueError:
-        raise RuntimeError(f"Ticker: Ungültige JSON-Antwort: {resp.text[:200]}")
-
-    if not isinstance(d, (list, tuple)) or len(d) < 7:
-        raise RuntimeError(f"Ticker: Unerwartetes Format: {d}")
-
-    last_price = float(d[6])
-    change_pct = float(d[5]) * 100.0  # Faktor → Prozent
-    return last_price, change_pct
 
 # ---------------------------------------------------------
 # INDIKATOREN
@@ -216,6 +200,10 @@ def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    EMA20/EMA50, MA200, Bollinger 20, RSI14.
+    MA200 = klassischer Bitcoin-Makrotrendfilter.
+    """
     if df.empty:
         return df
 
@@ -223,70 +211,174 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
     df["ema20"] = close.ewm(span=20, adjust=False).mean()
     df["ema50"] = close.ewm(span=50, adjust=False).mean()
+    df["ma200"] = close.rolling(200).mean()
 
-    sma = close.rolling(20).mean()
-    std = close.rolling(20).std(ddof=0)
-    df["bb_middle"] = sma
-    df["bb_upper"] = sma + std * 2
-    df["bb_lower"] = sma - std * 2
+    sma20 = close.rolling(20).mean()
+    std20 = close.rolling(20).std(ddof=0)
+    df["bb_mid"] = sma20
+    df["bb_up"] = sma20 + 2 * std20
+    df["bb_lo"] = sma20 - 2 * std20
 
     df["rsi14"] = compute_rsi(close)
 
     return df
 
+
 # ---------------------------------------------------------
-# SIGNAL-LOGIK
+# SIGNAL-LOGIK (kombinierte Medium-Term-Strategie)
 # ---------------------------------------------------------
 def signal_for_pair(last, prev):
-    """Regelbasierte technische Signal-Engine."""
-    ema20, ema50 = last["ema20"], last["ema50"]
+    """
+    9/10 Medium-Term Swing System (BTC-optimiert)
+    ---------------------------------------------------
+    Features:
+    - Adaptive Bollinger
+    - RSI Trend Confirmation
+    - Blow-Off-Top Candle Detector
+    """
+
     close = last["close"]
-    bb_u, bb_l, bb_m = last["bb_upper"], last["bb_lower"], last["bb_middle"]
-    rsi_now, rsi_prev = last["rsi14"], prev["rsi14"]
+    prev_close = prev["close"]
 
-    # STRONG BUY
-    if ema20 > ema50 and close <= bb_l and rsi_prev < 30 and rsi_now > 30:
-        return "STRONG BUY"
+    ema50 = last["ema50"]
+    ma200 = last["ma200"]
 
-    # BUY
-    if (
-        ema20 > ema50
-        and bb_l < close <= bb_m
-        and 30 <= rsi_now <= 50
-        and rsi_now > rsi_prev
-    ):
-        return "BUY"
+    rsi_now = last["rsi14"]
+    rsi_prev = prev["rsi14"]
 
-    # STRONG SELL
-    if ema20 < ema50 and close >= bb_u and rsi_prev > 70 and rsi_now < 70:
+    bb_up = last["bb_up"]
+    bb_lo = last["bb_lo"]
+    bb_mid = last["bb_mid"]
+
+    high = last["high"]
+    low = last["low"]
+    body = abs(close - last["open"])
+    candle_range = high - low
+    upper_wick = high - max(close, last["open"])
+
+    # Adaptive Volatility → passt Bollinger-Sensitivität an
+    vol = (bb_up - bb_lo) / bb_mid
+    # Normal: 0.04–0.10 bei BTC
+    is_low_vol = vol < 0.06
+    is_high_vol = vol > 0.12
+
+    # MA200 fehlt → nicht traden
+    if pd.isna(ma200):
+        return "HOLD"
+
+    # Nur Long-Trading in Bullen-Trends
+    if close < ma200:
+        return "HOLD"
+
+    # -------------------------------------------------------
+    # 0) Trendbruch-Exit (Downtrend beginnt)
+    # -------------------------------------------------------
+    
+
+    # -------------------------------------------------------
+    # Blow-Off-Top Detector (Bitcoin-spezifisch)
+    # -------------------------------------------------------
+    blowoff = (
+        upper_wick > candle_range * 0.45  # langer oberer Docht
+        and close < prev_close            # Umkehrkerze
+        and close > bb_up                 # über dem oberen BB
+        and rsi_now > 73                  # RSI hoch
+    )
+
+    if blowoff:
         return "STRONG SELL"
 
-    # SELL
-    if (
-        ema20 < ema50
-        and bb_m <= close < bb_u
-        and 50 <= rsi_now <= 70
+    # -------------------------------------------------------
+    # Adaptive STRONG BUY – tiefer Dip
+    # -------------------------------------------------------
+    deep_dip = (
+        close <= bb_lo
+        and rsi_now < 35
+        and rsi_now > rsi_prev
+    )
+
+    if deep_dip:
+        # bei niedriger Volatilität strengere Bedingungen
+        if is_low_vol and close < bb_lo * 0.995:
+            return "STRONG BUY"
+        return "STRONG BUY"
+
+    # -------------------------------------------------------
+    # BUY – normale gesunde Pullbacks
+    # -------------------------------------------------------
+    buy_price_cond = (
+        close <= bb_lo * (1.01 if is_high_vol else 1.00)
+        or close <= ema50 * 0.96
+    )
+
+    buy_rsi_cond = (
+        30 < rsi_now <= 48
+        and rsi_now > rsi_prev
+    )
+
+    if buy_price_cond and buy_rsi_cond:
+        return "BUY"
+
+    # -------------------------------------------------------
+    # STRONG SELL – extreme Überhitzung
+    # -------------------------------------------------------
+    strong_sell_cond = (
+        close > ema50 * 1.12
+        and close > bb_up
+        and rsi_now > 80
         and rsi_now < rsi_prev
-    ):
+    )
+
+    if strong_sell_cond:
+        return "STRONG SELL"
+
+    # -------------------------------------------------------
+    # SELL – normale Übertreibung
+    # -------------------------------------------------------
+    sell_cond = (
+        close > bb_up
+        and rsi_now > 72
+        and rsi_now < rsi_prev
+    )
+
+    if sell_cond:
         return "SELL"
 
+    # Nichts erkannt
     return "HOLD"
 
 
 def compute_signals(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty or len(df) < 21:
+    """
+    Wendet signal_for_pair() an und gibt nur neue Signale aus,
+    wenn sich die Richtung ändert → keine gespammten Wiederholungssignale.
+    """
+    if df.empty or len(df) < 2:
         df["signal"] = "NO DATA"
         return df
 
     signals = []
+    last_sig = "NO DATA"
+
     for i in range(len(df)):
-        if i < 20:
+        if i == 0:
             signals.append("NO DATA")
             continue
-        signals.append(signal_for_pair(df.iloc[i], df.iloc[i - 1]))
+
+        sig = signal_for_pair(df.iloc[i], df.iloc[i - 1])
+
+        # nur neues Signal, wenn Richtung wechselt
+        if sig == last_sig:
+            sig = "HOLD"
+
+        signals.append(sig)
+
+        if sig in ["STRONG BUY", "BUY", "SELL", "STRONG SELL"]:
+            last_sig = sig
 
     df["signal"] = signals
     return df
+
 
 # ---------------------------------------------------------
 # BACKTEST
@@ -378,11 +470,11 @@ def signal_color(signal: str) -> str:
         "NO DATA": "#757575",
     }.get(signal, "#9E9E9E")
 
+
 # ---------------------------------------------------------
 # PLOTLY CHARTS
 # ---------------------------------------------------------
 def base_layout_kwargs(theme: str):
-    """Basis-Farbschema je nach Theme (ohne x/y-Achsen → keine Doppel-Parameter)."""
     if theme == "Dark":
         bg, fg = "#020617", "#E5E7EB"
     else:
@@ -396,18 +488,10 @@ def base_layout_kwargs(theme: str):
 
 
 def grid_color_for_theme(theme: str) -> str:
-    if theme == "Dark":
-        return "#111827"
-    else:
-        return "#E5E7EB"
+    return "#111827" if theme == "Dark" else "#E5E7EB"
 
 
 def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
-    """
-    Oberer Chart:
-    Candles + EMA20 + EMA50 + Bollinger + Volume (auf zweiter Y-Achse).
-    Kein RSI hier drin.
-    """
     layout_kwargs = base_layout_kwargs(theme)
     bg = layout_kwargs["plot_bgcolor"]
     fg = layout_kwargs["font"]["color"]
@@ -466,11 +550,11 @@ def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
         )
 
     # Bollinger Bänder
-    if "bb_upper" in df:
+    if "bb_up" in df:
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df["bb_upper"],
+                y=df["bb_up"],
                 name="BB Upper",
                 mode="lines",
                 line=dict(width=1, color="#22c55e"),
@@ -479,10 +563,11 @@ def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
             col=1,
             secondary_y=False,
         )
+
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df["bb_middle"],
+                y=df["bb_mid"],
                 name="BB Mid",
                 mode="lines",
                 line=dict(width=1, dash="dot", color="#e5e7eb"),
@@ -491,10 +576,11 @@ def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
             col=1,
             secondary_y=False,
         )
+
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df["bb_lower"],
+                y=df["bb_lo"],
                 name="BB Lower",
                 mode="lines",
                 line=dict(width=1, color="#22c55e"),
@@ -535,7 +621,7 @@ def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
         paper_bgcolor=bg,
         font=dict(color=fg),
         margin=dict(l=10, r=10, t=60, b=40),
-        xaxis_rangeslider_visible=False,  # ⬅️ Mini-Chart/Slider aus
+        xaxis_rangeslider_visible=False,
     )
 
     # Achsen
@@ -568,7 +654,6 @@ def create_rsi_figure(df, theme):
     """
     Unterer Chart:
     Nur RSI (14) in violett mit 30/70 Linien.
-    Keine Candles, kein Volume, keine EMAs, keine Bollinger.
     """
     layout_kwargs = base_layout_kwargs(theme)
     bg = layout_kwargs["plot_bgcolor"]
@@ -589,7 +674,7 @@ def create_rsi_figure(df, theme):
     )
 
     # RSI Level-Linien
-    line_color = "#e5e7eb" if theme == "Dark" else "#6B7280"  # hell für Dark, grau für Light
+    line_color = "#e5e7eb" if theme == "Dark" else "#6B7280"
     fig.add_hline(y=70, line_dash="dash", line_color=line_color, line_width=1)
     fig.add_hline(y=30, line_dash="dash", line_color=line_color, line_width=1)
 
@@ -679,6 +764,7 @@ def create_signal_history_figure(df, allowed, theme):
 
     return fig
 
+
 # ---------------------------------------------------------
 # SESSION STATE INITIALISIERUNG
 # ---------------------------------------------------------
@@ -688,6 +774,7 @@ def init_state():
     st.session_state.setdefault("theme", "Dark")
     st.session_state.setdefault("backtest_horizon", 5)
     st.session_state.setdefault("backtest_trades", pd.DataFrame())
+
 
 # ---------------------------------------------------------
 # HAUPT UI / STREAMLIT APP
@@ -759,7 +846,7 @@ def main():
                 try:
                     price, chg_pct = fetch_ticker_24h(sym)
                     try:
-                        df_tmp = cached_fetch_klines(sym, selected_tf_internal, limit=120)
+                        df_tmp = cached_fetch_klines(sym, selected_tf_internal, limit=240)
                         df_tmp = compute_indicators(df_tmp)
                         df_tmp = compute_signals(df_tmp)
                         sig = latest_signal(df_tmp)
@@ -787,8 +874,11 @@ def main():
             df_watch = pd.DataFrame(rows).set_index("Symbol")
 
             def highlight(row):
+                theme = st.session_state.theme
                 if row.name == st.session_state.selected_symbol:
-                    return ["background-color:#111827; color:white"] * len(row)
+                    bg = "#111827" if theme == "Dark" else "#D1D5DB"
+                    fg = "white" if theme == "Dark" else "black"
+                    return [f"background-color:{bg}; color:{fg}"] * len(row)
                 return [""] * len(row)
 
             styled = df_watch.style.apply(highlight, axis=1).format(
@@ -831,12 +921,12 @@ def main():
                         st.session_state.selected_timeframe = tf
                         st.rerun()
 
-            # Daten abrufen
+           # Daten abrufen
             try:
                 df_raw = cached_fetch_klines(symbol, interval_internal, limit=240)
                 df = compute_indicators(df_raw.copy())
                 df = compute_signals(df)
-
+                
                 sig = latest_signal(df)
                 last = df.iloc[-1]
                 prev = df.iloc[-2]
@@ -1012,6 +1102,3 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
-
-
-
