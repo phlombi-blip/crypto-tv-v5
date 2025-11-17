@@ -1218,7 +1218,7 @@ def main():
                 date_from = None
                 date_to = None
 
-                                if not df_raw.empty:
+                if not df_raw.empty:
                     # Min/Max Datum aus den geladenen Candles
                     min_date = df_raw.index.min().date()
                     max_date = df_raw.index.max().date()
@@ -1472,6 +1472,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
