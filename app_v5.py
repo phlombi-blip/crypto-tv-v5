@@ -840,7 +840,6 @@ def create_signal_history_figure(df, allowed, theme):
     levels = {
         "STRONG SELL": -2,
         "SELL": -1,
-        "HOLD": 0,
         "BUY": 1,
         "STRONG BUY": 2,
     }
@@ -1459,6 +1458,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
