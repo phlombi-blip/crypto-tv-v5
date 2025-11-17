@@ -46,7 +46,7 @@ TIMEFRAMES = {
     "1d": "1D",  # Bitfinex schreibt 1D
 }
 
-DEFAULT_TIMEFRAME = "4h"
+DEFAULT_TIMEFRAME = "1d"
 VALID_SIGNALS = ["STRONG BUY", "BUY", "HOLD", "SELL", "STRONG SELL"]
 
 # Wie viele Jahre Historie sollen ungefähr geladen werden?
@@ -1213,3 +1213,4 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
