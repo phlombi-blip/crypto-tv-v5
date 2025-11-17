@@ -1218,36 +1218,50 @@ def main():
                 date_from = None
                 date_to = None
 
-                if not df_raw.empty:
+                                if not df_raw.empty:
                     # Min/Max Datum aus den geladenen Candles
                     min_date = df_raw.index.min().date()
                     max_date = df_raw.index.max().date()
 
+                    # --- Defaults aus Session State robust clampen ---
+                    default_from = st.session_state.get("date_from", min_date)
+                    default_to = st.session_state.get("date_to", max_date)
+
+                    # sicherstellen, dass Defaults im gültigen Bereich liegen
+                    if default_from < min_date or default_from > max_date:
+                        default_from = min_date
+                    if default_to < min_date or default_to > max_date:
+                        default_to = max_date
+
+                    # falls aus früherer Session from > to war
+                    if default_from > default_to:
+                        default_from, default_to = default_to, default_from
+
                     c_from, c_to = st.columns(2)
                     with c_from:
+                        # "Von" kann nur zwischen min_date und max_date liegen
                         date_from = st.date_input(
                             "📅 Von (Datum)",
-                            value=st.session_state.get("date_from", min_date),
+                            value=default_from,
                             min_value=min_date,
                             max_value=max_date,
                             key="date_from",
                         )
+
                     with c_to:
+                        # "Bis" kann nie vor "Von" liegen
                         date_to = st.date_input(
                             "📅 Bis (Datum)",
-                            value=st.session_state.get("date_to", max_date),
-                            min_value=min_date,
+                            value=default_to if default_to >= date_from else date_from,
+                            min_value=date_from,
                             max_value=max_date,
                             key="date_to",
                         )
 
-                    # Falls Benutzer versehentlich Von > Bis wählt → tauschen
-                    if date_from > date_to:
-                        date_from, date_to = date_to, date_from
-
                     # Filter auf DataFrame anwenden
                     mask = (df_raw.index.date >= date_from) & (df_raw.index.date <= date_to)
                     df_raw = df_raw.loc[mask]
+
 
                 # Indikatoren + Signale nur auf gefilterten Daten
                 if not df_raw.empty:
@@ -1458,6 +1472,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
