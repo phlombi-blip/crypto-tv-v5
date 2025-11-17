@@ -559,6 +559,23 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
     - unten: RSI (14)
     shared_xaxes=True → Zoom & Range sind synchron.
     """
+
+    # --- Farb-Setup (TradingView-like) ---
+    BULL_COLOR = "#22c55e"   # grüne Candles
+    BEAR_COLOR = "#ef4444"   # rote Candles
+
+    EMA20_COLOR = "#FF9800"  # Orange – EMA20
+    EMA50_COLOR = "#2196F3"  # Blau – EMA50
+
+    if theme == "Dark":
+        BB_LINE_COLOR = "#2962FF"
+        BB_FILL_COLOR = "rgba(41,98,255,0.18)"
+        BB_MID_COLOR = "#9CA3AF"
+    else:
+        BB_LINE_COLOR = "#2962FF"
+        BB_FILL_COLOR = "rgba(41,98,255,0.10)"
+        BB_MID_COLOR = "#6B7280"
+
     layout_kwargs = base_layout_kwargs(theme)
     bg = layout_kwargs["plot_bgcolor"]
     fg = layout_kwargs["font"]["color"]
@@ -590,73 +607,13 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
         paper_bgcolor=bg,
         font=dict(color=fg),
         margin=dict(l=10, r=10, t=60, b=40),
-        xaxis_rangeslider_visible=False,   # <--- DIESE ZEILE HINZUFÜGEN
+        xaxis_rangeslider_visible=False,
     )
 
-    # --- OBERES PANEL: PRICE + VOLUME ---
+    # --- OBERES PANEL: BOLLINGER + PRICE + VOLUME ---
 
-    # Candles
-    fig.add_trace(
-        go.Candlestick(
-            x=df.index,
-            open=df["open"],
-            high=df["high"],
-            low=df["low"],
-            close=df["close"],
-            name="Price",
-
-            # grüne Kerzen (Bullish)
-            increasing_fillcolor="#22c55e",
-            increasing_line_color="#22c55e",
-
-            # rote Kerzen (Bearish)
-            decreasing_fillcolor="#ef4444",
-            decreasing_line_color="#ef4444",
-        ),
-        row=1,
-        col=1,
-        secondary_y=False,
-    )
-
-    # EMA20 / EMA50
-    if "ema20" in df:
-        fig.add_trace(
-            go.Scatter(
-                x=df.index,
-                y=df["ema20"],
-                name="EMA20",
-                mode="lines",
-                line=dict(width=1.5, color="#3b82f6"),  # blau
-            ),
-            row=1,
-            col=1,
-            secondary_y=False,
-        )
-    if "ema50" in df:
-        fig.add_trace(
-            go.Scatter(
-                x=df.index,
-                y=df["ema50"],
-                name="EMA50",
-                mode="lines",
-                line=dict(width=1.5, color="#f97316"),  # orange
-            ),
-            row=1,
-            col=1,
-            secondary_y=False,
-        )
-
-    # Bollinger Bänder (TradingView-like: blau + leichter Fill)
+    # 1) Bollinger-Bänder zuerst → Shading liegt HINTER den Candles
     if "bb_up" in df:
-        if theme == "Dark":
-            bb_line = "#60a5fa"   # blau
-            bb_fill = "rgba(96,165,250,0.12)"
-            bb_mid = "#9ca3af"
-        else:
-            bb_line = "#3b82f6"
-            bb_fill = "rgba(59,130,246,0.08)"
-            bb_mid = "#6b7280"
-
         # Upper Band
         fig.add_trace(
             go.Scatter(
@@ -664,23 +621,23 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
                 y=df["bb_up"],
                 name="BB Upper",
                 mode="lines",
-                line=dict(width=1, color=bb_line),
+                line=dict(width=1, color=BB_LINE_COLOR),
             ),
             row=1,
             col=1,
             secondary_y=False,
         )
 
-        # Lower Band + Fill bis Upper
+        # Lower Band + Fill bis Upper (tonexty)
         fig.add_trace(
             go.Scatter(
                 x=df.index,
                 y=df["bb_lo"],
                 name="BB Lower",
                 mode="lines",
-                line=dict(width=1, color=bb_line),
+                line=dict(width=1, color=BB_LINE_COLOR),
                 fill="tonexty",
-                fillcolor=bb_fill,
+                fillcolor=BB_FILL_COLOR,
             ),
             row=1,
             col=1,
@@ -694,14 +651,63 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
                 y=df["bb_mid"],
                 name="BB Basis",
                 mode="lines",
-                line=dict(width=1, dash="dot", color=bb_mid),
+                line=dict(width=1, dash="dot", color=BB_MID_COLOR),
             ),
             row=1,
             col=1,
             secondary_y=False,
         )
 
-    # Volume auf zweiter Y-Achse (ohne Label-Text)
+    # 2) Candles (liegen optisch über dem Bollinger-Shading)
+    fig.add_trace(
+        go.Candlestick(
+            x=df.index,
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            name="Price",
+            # Bullish: vollgrün, Border = Fill (quasi kein Rand)
+            increasing_fillcolor=BULL_COLOR,
+            increasing_line_color=BULL_COLOR,
+            # Bearish: vollrot, Border = Fill
+            decreasing_fillcolor=BEAR_COLOR,
+            decreasing_line_color=BEAR_COLOR,
+        ),
+        row=1,
+        col=1,
+        secondary_y=False,
+    )
+
+    # 3) EMA20 / EMA50 (TradingView-Standardfarben)
+    if "ema20" in df:
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["ema20"],
+                name="EMA20",
+                mode="lines",
+                line=dict(width=1.5, color=EMA20_COLOR),  # orange
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
+    if "ema50" in df:
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["ema50"],
+                name="EMA50",
+                mode="lines",
+                line=dict(width=1.5, color=EMA50_COLOR),  # blau
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
+
+    # 4) Volume auf zweiter Y-Achse (ohne Label-Text)
     fig.add_trace(
         go.Bar(
             x=df.index,
@@ -1233,6 +1239,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
