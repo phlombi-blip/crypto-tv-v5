@@ -385,17 +385,13 @@ def _signal_core_with_reason(last, prev):
 
 
 def signal_for_pair(last, prev):
-    """
-    Alte einfache Schnittstelle: nur das Signal.
-    """
+    """Alte einfache Schnittstelle: nur das Signal."""
     sig, _ = _signal_core_with_reason(last, prev)
     return sig
 
 
 def signal_with_reason(last, prev):
-    """
-    Neue Schnittstelle: (signal, reason).
-    """
+    """Neue Schnittstelle: (signal, reason)."""
     return _signal_core_with_reason(last, prev)
 
 
@@ -537,7 +533,7 @@ def signal_color(signal: str) -> str:
 
 
 # ---------------------------------------------------------
-# PLOTLY CHARTS
+# PLOTLY CHARTS – GEMEINSAMER PRICE+RSI FIGURE
 # ---------------------------------------------------------
 def base_layout_kwargs(theme: str):
     if theme == "Dark":
@@ -556,18 +552,29 @@ def grid_color_for_theme(theme: str) -> str:
     return "#111827" if theme == "Dark" else "#E5E7EB"
 
 
-def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
+def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
+    """
+    Ein gemeinsamer Plot mit 2 Reihen:
+    - oben: Price + EMA + Bollinger + Volume
+    - unten: RSI (14)
+    shared_xaxes=True → Zoom & Range sind synchron.
+    """
     layout_kwargs = base_layout_kwargs(theme)
     bg = layout_kwargs["plot_bgcolor"]
     fg = layout_kwargs["font"]["color"]
     grid = grid_color_for_theme(theme)
 
     fig = make_subplots(
-        rows=1,
+        rows=2,
         cols=1,
-        specs=[[{"secondary_y": True}]],
-        subplot_titles=(f"{symbol_label}/USD — {timeframe_label}",),
+        shared_xaxes=True,
+        row_heights=[0.7, 0.3],
+        vertical_spacing=0.03,
+        specs=[[{"secondary_y": True}], [{"secondary_y": False}]],
+        subplot_titles=(f"{symbol_label}/USD — {timeframe_label}", "RSI (14)"),
     )
+
+    # --- OBERES PANEL: PRICE + VOLUME ---
 
     # Candles
     fig.add_trace(
@@ -655,7 +662,7 @@ def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
             secondary_y=False,
         )
 
-    # Volume auf zweiter Y-Achse
+    # Volume auf zweiter Y-Achse (ohne Label-Text)
     fig.add_trace(
         go.Bar(
             x=df.index,
@@ -669,9 +676,43 @@ def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
         secondary_y=True,
     )
 
-    # Layout
+    # --- UNTERES PANEL: RSI (14) ---
+
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df["rsi14"],
+            mode="lines",
+            name="RSI14",
+            line=dict(width=1.5, color="#a855f7"),  # violett
+        ),
+        row=2,
+        col=1,
+    )
+
+    # RSI Level-Linien (nur im unteren Panel)
+    line_color = "#e5e7eb" if theme == "Dark" else "#6B7280"
+    fig.add_hline(
+        y=70,
+        line_dash="dash",
+        line_color=line_color,
+        line_width=1,
+        row=2,
+        col=1,
+    )
+    fig.add_hline(
+        y=30,
+        line_dash="dash",
+        line_color=line_color,
+        line_width=1,
+        row=2,
+        col=1,
+    )
+
+    # --- Layout / Achsen ---
+
     fig.update_layout(
-        height=520,
+        height=720,
         hovermode="x unified",
         showlegend=True,
         legend=dict(
@@ -686,10 +727,9 @@ def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
         paper_bgcolor=bg,
         font=dict(color=fg),
         margin=dict(l=10, r=10, t=60, b=40),
-        xaxis_rangeslider_visible=False,
     )
 
-    # Achsen
+    # Price-Achse links
     fig.update_yaxes(
         title_text="Price",
         showgrid=True,
@@ -698,72 +738,34 @@ def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
         col=1,
         secondary_y=False,
     )
+
+    # Volume-Achse rechts – kein Titel, nur Skala
     fig.update_yaxes(
-        title_text="Volume",
+        title_text="",
         showgrid=False,
         row=1,
         col=1,
         secondary_y=True,
     )
-    fig.update_xaxes(
-        title_text="Time",
-        row=1,
-        col=1,
-        showgrid=False,
-    )
 
-    return fig
-
-
-def create_rsi_figure(df, theme):
-    """
-    Unterer Chart:
-    Nur RSI (14) in violett mit 30/70 Linien.
-    """
-    layout_kwargs = base_layout_kwargs(theme)
-    bg = layout_kwargs["plot_bgcolor"]
-    fg = layout_kwargs["font"]["color"]
-    grid = grid_color_for_theme(theme)
-
-    fig = go.Figure()
-
-    # RSI Linie
-    fig.add_trace(
-        go.Scatter(
-            x=df.index,
-            y=df["rsi14"],
-            mode="lines",
-            name="RSI14",
-            line=dict(width=1.5, color="#a855f7"),  # violett
-        )
-    )
-
-    # RSI Level-Linien
-    line_color = "#e5e7eb" if theme == "Dark" else "#6B7280"
-    fig.add_hline(y=70, line_dash="dash", line_color=line_color, line_width=1)
-    fig.add_hline(y=30, line_dash="dash", line_color=line_color, line_width=1)
-
-    fig.update_layout(
-        title="RSI (14)",
-        height=220,
-        hovermode="x unified",
-        plot_bgcolor=bg,
-        paper_bgcolor=bg,
-        font=dict(color=fg),
-        margin=dict(l=10, r=10, t=40, b=40),
-        showlegend=False,
-    )
-
+    # RSI-Achse
     fig.update_yaxes(
         title_text="RSI",
         range=[0, 100],
         showgrid=True,
         gridcolor=grid,
+        row=2,
+        col=1,
     )
+
+    # X-Achse nur unten beschriften
     fig.update_xaxes(
         title_text="Time",
         showgrid=False,
+        row=2,
+        col=1,
     )
+    fig.update_xaxes(showgrid=False, row=1, col=1)
 
     return fig
 
@@ -1061,13 +1063,10 @@ def main():
 
             st.markdown("---")
 
-            # Charts rendern
+            # Gemeinsamer Price+RSI-Chart
             if not df.empty:
-                fig_top = create_price_volume_figure(df, symbol_label, tf_label, theme)
-                st.plotly_chart(fig_top, use_container_width=True)
-
-                fig_rsi = create_rsi_figure(df, theme)
-                st.plotly_chart(fig_rsi, use_container_width=True)
+                fig_price_rsi = create_price_rsi_figure(df, symbol_label, tf_label, theme)
+                st.plotly_chart(fig_price_rsi, use_container_width=True)
             else:
                 st.warning("Keine Daten geladen – API/Internet prüfen.")
 
@@ -1155,7 +1154,6 @@ def main():
                 df_show["ret_pct"] = df_show["ret_pct"].map(lambda x: f"{x:.2f}")
                 df_show["correct"] = df_show["correct"].map(lambda x: "✅" if x else "❌")
 
-                # Spalten-Reihenfolge inkl. reason, falls vorhanden
                 cols = [
                     "entry_time",
                     "exit_time",
