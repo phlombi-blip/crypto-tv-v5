@@ -1079,6 +1079,9 @@ def main():
             # -------------------------------------------------
             # Daten abrufen + Date-Picker (Von / Bis)
             # -------------------------------------------------
+            # -------------------------------------------------
+            # Daten abrufen + Date-Picker (Von / Bis)
+            # -------------------------------------------------
             try:
                 limit_main = candles_for_history(interval_internal, years=YEARS_HISTORY)
                 df_raw = cached_fetch_klines(symbol, interval_internal, limit=limit_main)
@@ -1341,6 +1344,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
