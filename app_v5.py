@@ -45,7 +45,7 @@ TIMEFRAMES = {
     "1d": "1D",  # Bitfinex schreibt 1D
 }
 
-DEFAULT_TIMEFRAME = "1h"
+DEFAULT_TIMEFRAME = "4h"
 VALID_SIGNALS = ["STRONG BUY", "BUY", "HOLD", "SELL", "STRONG SELL"]
 
 # ---------------------------------------------------------
@@ -828,7 +828,7 @@ def main():
                 with cols_tf[i]:
                     if st.button(tf, key=f"tf_{tf}"):
                         st.session_state.selected_timeframe = tf
-                        st.experimental_rerun()
+                        st.rerun()
 
             # Daten abrufen
             try:
@@ -1000,7 +1000,8 @@ def main():
         r1, r2 = st.columns([1, 5])
         with r1:
             if st.button("🔄 Refresh"):
-                st.experimental_rerun()
+                st.rerun()
+
         with r2:
             st.caption("Charts aktualisieren automatisch alle 60 Sekunden (oder manuell per Button).")
 
@@ -1010,3 +1011,4 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
