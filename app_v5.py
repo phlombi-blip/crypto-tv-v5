@@ -5,6 +5,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
+from html import escape  # für sichere Tooltips
 
 # Optional: Auto-Refresh (falls Paket installiert ist)
 try:
@@ -47,6 +48,24 @@ TIMEFRAMES = {
 
 DEFAULT_TIMEFRAME = "4h"
 VALID_SIGNALS = ["STRONG BUY", "BUY", "HOLD", "SELL", "STRONG SELL"]
+
+# Wie viele Jahre Historie sollen ungefähr geladen werden?
+YEARS_HISTORY = 3.0
+
+
+def candles_for_history(interval_internal: str, years: float = YEARS_HISTORY) -> int:
+    """Rechnet ungefähr aus, wie viele Kerzen für X Jahre gebraucht werden."""
+    candles_per_day_map = {
+        "1m": 60 * 24,   # 1440
+        "5m": 12 * 24,   # 288
+        "15m": 4 * 24,   # 96
+        "1h": 24,        # 24
+        "4h": 6,         # 6
+        "1D": 1,         # 1
+    }
+    candles_per_day = candles_per_day_map.get(interval_internal, 24)
+    return int(candles_per_day * 365 * years)
+
 
 # ---------------------------------------------------------
 # THEME CSS
@@ -225,16 +244,15 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------
-# SIGNAL-LOGIK (kombinierte Medium-Term-Strategie)
+# SIGNAL-LOGIK (mit Begründung)
 # ---------------------------------------------------------
-def signal_for_pair(last, prev):
+def _signal_core_with_reason(last, prev):
     """
-    9/10 Medium-Term Swing System (BTC-optimiert)
-    ---------------------------------------------------
-    Features:
+    Kernlogik:
     - Adaptive Bollinger
     - RSI Trend Confirmation
-    - Blow-Off-Top Candle Detector
+    - Blow-Off-Top Detector
+    Liefert (signal, reason).
     """
 
     close = last["close"]
@@ -257,31 +275,35 @@ def signal_for_pair(last, prev):
     upper_wick = high - max(close, last["open"])
 
     # Adaptive Volatility → passt Bollinger-Sensitivität an
-    vol = (bb_up - bb_lo) / bb_mid
-    # Normal: 0.04–0.10 bei BTC
+    vol = (bb_up - bb_lo) / bb_mid if bb_mid != 0 else 0
     is_low_vol = vol < 0.06
     is_high_vol = vol > 0.12
 
     # MA200 fehlt → nicht traden
     if pd.isna(ma200):
-        return "HOLD"
+        return "HOLD", "MA200 noch nicht verfügbar – zu wenig Historie, daher kein Trade."
 
     # Nur Long-Trading in Bullen-Trends
     if close < ma200:
-        return "HOLD"
+        return "HOLD", "Kurs liegt unter MA200 – System handelt nur Long im Bullenmarkt."
 
     # -------------------------------------------------------
     # Blow-Off-Top Detector (Bitcoin-spezifisch)
     # -------------------------------------------------------
     blowoff = (
-        upper_wick > candle_range * 0.45  # langer oberer Docht
-        and close < prev_close            # Umkehrkerze
-        and close > bb_up                 # über dem oberen BB
-        and rsi_now > 73                  # RSI hoch
+        candle_range > 0
+        and upper_wick > candle_range * 0.45  # langer oberer Docht
+        and close < prev_close                # Umkehrkerze
+        and close > bb_up                     # über dem oberen BB
+        and rsi_now > 73                      # RSI hoch
     )
 
     if blowoff:
-        return "STRONG SELL"
+        return (
+            "STRONG SELL",
+            "Blow-Off-Top: langer oberer Docht, Kurs über oberem Bollinger-Band "
+            "und RSI > 73 mit Umkehrkerze – hohes Top-Risiko."
+        )
 
     # -------------------------------------------------------
     # Adaptive STRONG BUY – tiefer Dip
@@ -293,10 +315,17 @@ def signal_for_pair(last, prev):
     )
 
     if deep_dip:
-        # bei niedriger Volatilität strengere Bedingungen
         if is_low_vol and close < bb_lo * 0.995:
-            return "STRONG BUY"
-        return "STRONG BUY"
+            return (
+                "STRONG BUY",
+                "Tiefer Dip: Kurs an/unter unterem Bollinger-Band in ruhiger Phase, "
+                "RSI < 35 dreht nach oben – aggressiver Rebound-Einstieg."
+            )
+        return (
+            "STRONG BUY",
+            "Tiefer Dip: Kurs am unteren Bollinger-Band, RSI < 35 und steigt wieder – "
+            "kräftiges Long-Signal."
+        )
 
     # -------------------------------------------------------
     # BUY – normale gesunde Pullbacks
@@ -312,7 +341,11 @@ def signal_for_pair(last, prev):
     )
 
     if buy_price_cond and buy_rsi_cond:
-        return "BUY"
+        return (
+            "BUY",
+            "Gesunder Pullback: Kurs im Bereich unteres Bollinger-Band bzw. leicht unter EMA50, "
+            "RSI zwischen 30 und 48 und dreht nach oben."
+        )
 
     # -------------------------------------------------------
     # STRONG SELL – extreme Überhitzung
@@ -325,7 +358,11 @@ def signal_for_pair(last, prev):
     )
 
     if strong_sell_cond:
-        return "STRONG SELL"
+        return (
+            "STRONG SELL",
+            "Extreme Überhitzung: Kurs deutlich über EMA50 und oberem Bollinger-Band, "
+            "RSI > 80 und fällt bereits – starkes Abverkaufsrisiko."
+        )
 
     # -------------------------------------------------------
     # SELL – normale Übertreibung
@@ -337,41 +374,70 @@ def signal_for_pair(last, prev):
     )
 
     if sell_cond:
-        return "SELL"
+        return (
+            "SELL",
+            "Übertreibung: Kurs über dem oberen Bollinger-Band, RSI > 72 und dreht nach unten – "
+            "Gewinnmitnahme / Short-Signal."
+        )
 
     # Nichts erkannt
-    return "HOLD"
+    return "HOLD", "Keine klare Übertreibung oder Dip – System wartet (HOLD)."
+
+
+def signal_for_pair(last, prev):
+    """
+    Alte einfache Schnittstelle: nur das Signal.
+    """
+    sig, _ = _signal_core_with_reason(last, prev)
+    return sig
+
+
+def signal_with_reason(last, prev):
+    """
+    Neue Schnittstelle: (signal, reason).
+    """
+    return _signal_core_with_reason(last, prev)
 
 
 def compute_signals(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Wendet signal_for_pair() an und gibt nur neue Signale aus,
+    Wendet signal_with_reason() an und gibt nur neue Signale aus,
     wenn sich die Richtung ändert → keine gespammten Wiederholungssignale.
+    Zusätzlich Spalte 'signal_reason'.
     """
     if df.empty or len(df) < 2:
         df["signal"] = "NO DATA"
+        df["signal_reason"] = "Nicht genug Daten für ein Signal."
         return df
 
     signals = []
+    reasons = []
     last_sig = "NO DATA"
 
     for i in range(len(df)):
         if i == 0:
             signals.append("NO DATA")
+            reasons.append("Erste Candle – keine Historie für Signalberechnung.")
             continue
 
-        sig = signal_for_pair(df.iloc[i], df.iloc[i - 1])
+        sig_raw, reason_raw = signal_with_reason(df.iloc[i], df.iloc[i - 1])
 
         # nur neues Signal, wenn Richtung wechselt
-        if sig == last_sig:
-            sig = "HOLD"
+        if sig_raw == last_sig:
+            sig_display = "HOLD"
+            reason_display = f"Signal '{sig_raw}' besteht weiter – kein neues Signal generiert."
+        else:
+            sig_display = sig_raw
+            reason_display = reason_raw
 
-        signals.append(sig)
+        signals.append(sig_display)
+        reasons.append(reason_display)
 
-        if sig in ["STRONG BUY", "BUY", "SELL", "STRONG SELL"]:
-            last_sig = sig
+        if sig_raw in ["STRONG BUY", "BUY", "SELL", "STRONG SELL"]:
+            last_sig = sig_raw
 
     df["signal"] = signals
+    df["signal_reason"] = reasons
     return df
 
 
@@ -388,7 +454,7 @@ def latest_signal(df: pd.DataFrame) -> str:
 def compute_backtest_trades(df: pd.DataFrame, horizon: int = 5) -> pd.DataFrame:
     """
     Erzeugt eine Backtest-Tabelle:
-    entry_time, exit_time, signal, entry_price, exit_price, ret_pct, correct
+    entry_time, exit_time, signal, reason, entry_price, exit_price, ret_pct, correct
     """
     if df.empty or "signal" not in df.columns:
         return pd.DataFrame()
@@ -397,6 +463,8 @@ def compute_backtest_trades(df: pd.DataFrame, horizon: int = 5) -> pd.DataFrame:
     closes = df["close"].values
     signals = df["signal"].values
     idx = df.index
+
+    has_reason = "signal_reason" in df.columns
 
     for i in range(len(df) - horizon):
         sig = signals[i]
@@ -411,12 +479,14 @@ def compute_backtest_trades(df: pd.DataFrame, horizon: int = 5) -> pd.DataFrame:
         ret = (exit_ - entry) / entry * 100
         direction = 1 if sig in ["BUY", "STRONG BUY"] else -1
         correct = (np.sign(ret) * direction) > 0
+        reason = df["signal_reason"].iloc[i] if has_reason else ""
 
         rows.append(
             {
                 "entry_time": idx[i],
                 "exit_time": idx[i + horizon],
                 "signal": sig,
+                "reason": reason,
                 "entry_price": entry,
                 "exit_price": exit_,
                 "ret_pct": float(ret),
@@ -464,33 +534,6 @@ def signal_color(signal: str) -> str:
         "STRONG SELL": "#D50000",
         "NO DATA": "#757575",
     }.get(signal, "#9E9E9E")
-
-
-# ---------------------------------------------------------
-# HILFSFUNKTION: WIE VIELE CANDLES FÜR X JAHRE?
-# ---------------------------------------------------------
-def candles_for_history(interval: str, years: float = 1.0) -> int:
-    """
-    Gibt zurück, wie viele Candles ungefähr für 'years' Jahre Historie
-    nötig sind – abhängig vom Timeframe.
-    """
-    days = 365 * years
-
-    candles_per_day = {
-        "1m": 24 * 60,          # 1440 Kerzen pro Tag
-        "5m": (24 * 60) // 5,   # 288
-        "15m": (24 * 60) // 15, # 96
-        "1h": 24,               # 24
-        "4h": 6,                # 6
-        "1D": 1,                # 1
-    }
-
-    cpd = candles_per_day.get(interval)
-    if cpd is None:
-        # Fallback: einfach 365 Kerzen pro Jahr
-        return int(days)
-
-    return int(days * cpd)
 
 
 # ---------------------------------------------------------
@@ -565,21 +608,6 @@ def create_price_volume_figure(df, symbol_label, timeframe_label, theme):
                 name="EMA50",
                 mode="lines",
                 line=dict(width=1.5, color="#f97316"),  # orange
-            ),
-            row=1,
-            col=1,
-            secondary_y=False,
-        )
-
-    # MA200 – langfristiger Trend
-    if "ma200" in df:
-        fig.add_trace(
-            go.Scatter(
-                x=df.index,
-                y=df["ma200"],
-                name="MA200",
-                mode="lines",
-                line=dict(width=1.5, color="#eab308", dash="dash"),  # gelb, gestrichelt
             ),
             row=1,
             col=1,
@@ -741,7 +769,7 @@ def create_rsi_figure(df, theme):
 
 
 def create_signal_history_figure(df, allowed, theme):
-    """Signal-Historie als eigener Chart."""
+    """Signal-Historie als eigener Chart – mit Begründung im Hover."""
     fig = go.Figure()
 
     levels = {
@@ -755,6 +783,10 @@ def create_signal_history_figure(df, allowed, theme):
     if "signal" not in df.columns:
         df = df.copy()
         df["signal"] = "NO DATA"
+
+    if "signal_reason" not in df.columns:
+        df = df.copy()
+        df["signal_reason"] = ""
 
     df2 = df[df["signal"].isin(levels.keys())].copy()
     df2["lvl"] = df2["signal"].map(levels)
@@ -773,6 +805,12 @@ def create_signal_history_figure(df, allowed, theme):
                 mode="markers",
                 name=sig,
                 marker=dict(size=8),
+                text=sub["signal_reason"],
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    f"Signal: {sig}<br>"
+                    "%{text}<extra></extra>"
+                ),
             )
         )
 
@@ -878,13 +916,13 @@ def main():
             rows = []
             selected_tf_label = st.session_state.selected_timeframe
             selected_tf_internal = TIMEFRAMES[selected_tf_label]
+            limit_watch = candles_for_history(selected_tf_internal, years=YEARS_HISTORY)
 
             for label, sym in SYMBOLS.items():
                 try:
                     price, chg_pct = fetch_ticker_24h(sym)
                     try:
-                        # Für Watchlist reicht kürzere Historie
-                        df_tmp = cached_fetch_klines(sym, selected_tf_internal, limit=240)
+                        df_tmp = cached_fetch_klines(sym, selected_tf_internal, limit=limit_watch)
                         df_tmp = compute_indicators(df_tmp)
                         df_tmp = compute_signals(df_tmp)
                         sig = latest_signal(df_tmp)
@@ -959,10 +997,10 @@ def main():
                         st.session_state.selected_timeframe = tf
                         st.rerun()
 
-            # Daten abrufen (für Chart & Backtest mit ~1 Jahr Historie)
+            # Daten abrufen
             try:
-                limit = candles_for_history(interval_internal, years=1.0)
-                df_raw = cached_fetch_klines(symbol, interval_internal, limit=limit)
+                limit_main = candles_for_history(interval_internal, years=YEARS_HISTORY)
+                df_raw = cached_fetch_klines(symbol, interval_internal, limit=limit_main)
                 df = compute_indicators(df_raw.copy())
                 df = compute_signals(df)
 
@@ -974,16 +1012,18 @@ def main():
                 change_abs = last_price - prev["close"]
                 change_pct = (change_abs / prev["close"]) * 100 if prev["close"] != 0 else 0
                 last_time = df.index[-1]
+                signal_reason = last.get("signal_reason", "")
 
                 feed_ok = True
                 error_msg = ""
             except Exception as e:
                 df = pd.DataFrame()
                 sig = "NO DATA"
-                last_price = 0.0
-                change_abs = 0.0
-                change_pct = 0.0
+                last_price = 0
+                change_abs = 0
+                change_pct = 0
                 last_time = None
+                signal_reason = ""
                 feed_ok = False
                 error_msg = str(e)
 
@@ -1003,8 +1043,10 @@ def main():
 
             with k3:
                 st.caption("Signal")
+                reason_html = escape(signal_reason, quote=True)
                 st.markdown(
-                    f'<span class="signal-badge" style="background-color:{signal_color(sig)};">{sig}</span>',
+                    f'<span class="signal-badge" style="background-color:{signal_color(sig)};" '
+                    f'title="{reason_html}">{sig}</span>',
                     unsafe_allow_html=True,
                 )
 
@@ -1112,6 +1154,19 @@ def main():
                 df_show["exit_time"] = df_show["exit_time"].dt.strftime("%Y-%m-%d %H:%M")
                 df_show["ret_pct"] = df_show["ret_pct"].map(lambda x: f"{x:.2f}")
                 df_show["correct"] = df_show["correct"].map(lambda x: "✅" if x else "❌")
+
+                # Spalten-Reihenfolge inkl. reason, falls vorhanden
+                cols = [
+                    "entry_time",
+                    "exit_time",
+                    "signal",
+                    "reason",
+                    "entry_price",
+                    "exit_price",
+                    "ret_pct",
+                    "correct",
+                ]
+                df_show = df_show[[c for c in cols if c in df_show.columns]]
 
                 st.dataframe(df_show, use_container_width=True, height=260)
 
