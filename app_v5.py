@@ -698,7 +698,7 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
             secondary_y=False,
         )
 
-    # 4) EMA20 / EMA50 (TradingView-Standardfarben)
+    # 4) EMA20 / EMA50 / EMA200 (TradingView-Standardfarben)
     if "ema20" in df:
         fig.add_trace(
             go.Scatter(
@@ -721,6 +721,21 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
                 name="EMA50",
                 mode="lines",
                 line=dict(width=1.5, color=EMA50_COLOR),
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
+
+    # MA200 einzeichnen (wichtige Trendlinie)
+    if "ma200" in df:
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df["ma200"],
+                name="MA200",
+                mode="lines",
+                line=dict(width=1.8, color="#e5e7eb"),  # hellgrau/weiß wie in TradingView
             ),
             row=1,
             col=1,
@@ -1387,6 +1402,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
