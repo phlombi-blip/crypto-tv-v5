@@ -590,8 +590,8 @@ def create_rsi_figure(df, theme):
 
     # RSI Level-Linien
     line_color = "#e5e7eb" if theme == "Dark" else "#6B7280"  # hell für Dark, grau für Light
-    fig.add_hline(y=70, line_dash="dash", line_color=line_color)
-    fig.add_hline(y=30, line_dash="dash", line_color=line_color)
+    fig.add_hline(y=70, line_dash="dash", line_color=line_color, line_width=1)
+    fig.add_hline(y=30, line_dash="dash", line_color=line_color, line_width=1)
 
     fig.update_layout(
         title="RSI (14)",
@@ -1012,5 +1012,6 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
