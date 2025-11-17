@@ -622,27 +622,30 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
 
     # --- OBERES PANEL: BOLLINGER + PRICE + VOLUME ---
 
-    # 1) Bollinger-Band-Fläche als eigenes Polygon (liegt sicher HINTER allem)
+    # 1) Bollinger-Band-Fläche nur mit validen Werten zeichnen
     if {"bb_up", "bb_lo"}.issubset(df.columns):
-        band_x = list(df.index) + list(df.index[::-1])
-        band_y = list(df["bb_up"]) + list(df["bb_lo"][::-1])
-
-        fig.add_trace(
-            go.Scatter(
-                x=band_x,
-                y=band_y,
-                name="BB Area",
-                mode="lines",
-                line=dict(width=0),
-                fill="toself",
-                fillcolor=BB_FILL_COLOR,
-                hoverinfo="skip",
-                showlegend=False,
-            ),
-            row=1,
-            col=1,
-            secondary_y=False,
-        )
+        bb_valid = df[["bb_up", "bb_lo"]].dropna()
+    
+        if not bb_valid.empty:
+            band_x = list(bb_valid.index) + list(bb_valid.index[::-1])
+            band_y = list(bb_valid["bb_up"]) + list(bb_valid["bb_lo"][::-1])
+    
+            fig.add_trace(
+                go.Scatter(
+                    x=band_x,
+                    y=band_y,
+                    name="BB Area",
+                    mode="lines",
+                    line=dict(width=0),
+                    fill="toself",
+                    fillcolor=BB_FILL_COLOR,
+                    hoverinfo="skip",
+                    showlegend=False,
+                ),
+                row=1,
+                col=1,
+                secondary_y=False,
+            )
 
     # 2) Candles (liegen über dem Band)
     fig.add_trace(
@@ -1338,6 +1341,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
