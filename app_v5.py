@@ -1079,39 +1079,33 @@ def main():
             # -------------------------------------------------
             # Daten abrufen + Date-Picker (Von / Bis)
             # -------------------------------------------------
-            # -------------------------------------------------
-            # Daten abrufen + Date-Picker (Von / Bis)
-            # -------------------------------------------------
             try:
                 limit_main = candles_for_history(interval_internal, years=YEARS_HISTORY)
-                df_raw = cached_fetch_klines(symbol, interval_internal, limit=limit_main)
 
-                # Defaults
+                # 1) komplette Historie laden
+                df_all = cached_fetch_klines(symbol, interval_internal, limit=limit_main)
+
                 date_from = None
                 date_to = None
+                mask = None
 
-                if not df_raw.empty:
-                    # Min/Max Datum aus den geladenen Candles
-                    min_date = df_raw.index.min().date()
-                    max_date = df_raw.index.max().date()
+                if not df_all.empty:
+                    # Min/Max Datum aus voller Historie
+                    min_date = df_all.index.min().date()
+                    max_date = df_all.index.max().date()
 
-                    # --- Defaults aus Session State robust clampen ---
+                    # Defaults aus Session State (oder volle Range)
                     default_from = st.session_state.get("date_from", min_date)
                     default_to = st.session_state.get("date_to", max_date)
 
-                    # sicherstellen, dass Defaults im gültigen Bereich liegen
+                    # clampen, falls sich der verfügbare Bereich geändert hat
                     if default_from < min_date or default_from > max_date:
                         default_from = min_date
                     if default_to < min_date or default_to > max_date:
                         default_to = max_date
 
-                    # falls aus früherer Session from > to war
-                    if default_from > default_to:
-                        default_from, default_to = default_to, default_from
-
                     c_from, c_to = st.columns(2)
                     with c_from:
-                        # "Von" kann nur zwischen min_date und max_date liegen
                         date_from = st.date_input(
                             "📅 Von (Datum)",
                             value=default_from,
@@ -1119,29 +1113,36 @@ def main():
                             max_value=max_date,
                             key="date_from",
                         )
-
                     with c_to:
-                        # "Bis" kann nie vor "Von" liegen
                         date_to = st.date_input(
                             "📅 Bis (Datum)",
-                            value=default_to if default_to >= date_from else date_from,
-                            min_value=date_from,
+                            value=default_to,
+                            min_value=min_date,
                             max_value=max_date,
                             key="date_to",
                         )
 
-                    # Filter auf DataFrame anwenden
-                    mask = (df_raw.index.date >= date_from) & (df_raw.index.date <= date_to)
-                    df_raw = df_raw.loc[mask]
+                    # falls vertauscht → korrigieren
+                    if date_from > date_to:
+                        date_from, date_to = date_to, date_from
 
+                    # Maske für sichtbaren Zeitraum
+                    mask = (df_all.index.date >= date_from) & (df_all.index.date <= date_to)
 
-                # Indikatoren + Signale nur auf gefilterten Daten
-                if not df_raw.empty:
-                    df = compute_indicators(df_raw.copy())
-                    df = compute_signals(df)
+                # 2) Indikatoren & Signale auf kompletter Historie berechnen
+                if not df_all.empty:
+                    df_all_ind = compute_indicators(df_all.copy())
+                    df_all_ind = compute_signals(df_all_ind)
+
+                    # 3) Sichtbaren Zeitraum ausschneiden
+                    if mask is not None:
+                        df = df_all_ind.loc[mask]
+                    else:
+                        df = df_all_ind.copy()
                 else:
                     df = pd.DataFrame()
 
+                # 4) Kennzahlen / Stati setzen
                 if df.empty:
                     sig = "NO DATA"
                     last_price = 0
@@ -1165,6 +1166,7 @@ def main():
                     error_msg = ""
 
             except Exception as e:
+        
                 df = pd.DataFrame()
                 sig = "NO DATA"
                 last_price = 0
@@ -1344,6 +1346,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
