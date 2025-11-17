@@ -569,11 +569,11 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
 
     if theme == "Dark":
         BB_LINE_COLOR = "#2962FF"
-        BB_FILL_COLOR = "rgba(41,98,255,0.18)"
+        BB_FILL_COLOR = "rgba(41,98,255,0.12)"   # sehr dezentes Blau
         BB_MID_COLOR = "#9CA3AF"
     else:
         BB_LINE_COLOR = "#2962FF"
-        BB_FILL_COLOR = "rgba(41,98,255,0.10)"
+        BB_FILL_COLOR = "rgba(41,98,255,0.06)"
         BB_MID_COLOR = "#6B7280"
 
     layout_kwargs = base_layout_kwargs(theme)
@@ -614,12 +614,12 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
 
     # 1) Bollinger-Bänder zuerst → Shading liegt HINTER den Candles
     if "bb_up" in df:
-        # Upper Band
+        # Lower Band (ohne Fill, nur Linie)
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df["bb_up"],
-                name="BB Upper",
+                y=df["bb_lo"],
+                name="BB Lower",
                 mode="lines",
                 line=dict(width=1, color=BB_LINE_COLOR),
             ),
@@ -628,12 +628,12 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
             secondary_y=False,
         )
 
-        # Lower Band + Fill bis Upper (tonexty)
+        # Upper Band mit Fill bis zum Lower Band (tonexty)
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df["bb_lo"],
-                name="BB Lower",
+                y=df["bb_up"],
+                name="BB Upper",
                 mode="lines",
                 line=dict(width=1, color=BB_LINE_COLOR),
                 fill="tonexty",
@@ -756,24 +756,6 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
 
     # --- Layout / Achsen ---
 
-    fig.update_layout(
-        height=720,
-        hovermode="x unified",
-        showlegend=True,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="left",
-            x=0,
-            font=dict(size=10),
-        ),
-        plot_bgcolor=bg,
-        paper_bgcolor=bg,
-        font=dict(color=fg),
-        margin=dict(l=10, r=10, t=60, b=40),
-    )
-
     # Price-Achse links
     fig.update_yaxes(
         title_text="Price",
@@ -813,6 +795,79 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
     fig.update_xaxes(showgrid=False, row=1, col=1)
 
     return fig
+
+
+def create_signal_history_figure(df, allowed, theme):
+    """Signal-Historie als eigener Chart – mit Begründung im Hover."""
+    fig = go.Figure()
+
+    levels = {
+        "STRONG SELL": -2,
+        "SELL": -1,
+        "HOLD": 0,
+        "BUY": 1,
+        "STRONG BUY": 2,
+    }
+
+    if "signal" not in df.columns:
+        df = df.copy()
+        df["signal"] = "NO DATA"
+
+    if "signal_reason" not in df.columns:
+        df = df.copy()
+        df["signal_reason"] = ""
+
+    df2 = df[df["signal"].isin(levels.keys())].copy()
+    df2["lvl"] = df2["signal"].map(levels)
+    df2 = df2[df2["signal"].isin(allowed)]
+
+    for sig, lvl in levels.items():
+        if sig not in allowed:
+            continue
+        sub = df2[df2["signal"] == sig]
+        if sub.empty:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=sub.index,
+                y=[lvl] * len(sub),
+                mode="markers",
+                name=sig,
+                marker=dict(size=8),
+                text=sub["signal_reason"],
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    f"Signal: {sig}<br>"
+                    "%{text}<extra></extra>"
+                ),
+            )
+        )
+
+    layout_kwargs = base_layout_kwargs(theme)
+    bg = layout_kwargs["plot_bgcolor"]
+    fg = layout_kwargs["font"]["color"]
+    grid = grid_color_for_theme(theme)
+
+    fig.update_layout(
+        title="Signal History",
+        height=220,
+        hovermode="x unified",
+        margin=dict(l=10, r=10, t=40, b=10),
+        plot_bgcolor=bg,
+        paper_bgcolor=bg,
+        font=dict(color=fg),
+    )
+
+    fig.update_yaxes(
+        tickvals=[-2, -1, 0, 1, 2],
+        ticktext=list(levels.keys()),
+        range=[-2.5, 2.5],
+        showgrid=True,
+        gridcolor=grid,
+    )
+
+    return fig
+
 
 
 def create_signal_history_figure(df, allowed, theme):
@@ -1239,6 +1294,7 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
 
 
