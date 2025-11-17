@@ -604,8 +604,14 @@ def create_price_rsi_figure(df, symbol_label, timeframe_label, theme):
             low=df["low"],
             close=df["close"],
             name="Price",
-            increasing_line_color="#22c55e",  # grün
-            decreasing_line_color="#ef4444",  # rot
+
+            # grüne Kerzen (Bullish)
+            increasing_fillcolor="#22c55e",
+            increasing_line_color="#22c55e",
+
+            # rote Kerzen (Bearish)
+            decreasing_fillcolor="#ef4444",
+            decreasing_line_color="#ef4444",
         ),
         row=1,
         col=1,
@@ -1213,4 +1219,5 @@ def main():
 # ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+
 
